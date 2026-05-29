@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import * as XLSX from 'xlsx'
-import { ConfigProvider, Layout, Menu, Table, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Empty, Row, Col, Divider, message } from 'antd'
+import { ConfigProvider, Layout, Menu, Table, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Empty, Row, Col, Divider, message, Select, Input } from 'antd'
 import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, InboxOutlined } from '@ant-design/icons'
 import './App.css'
 
@@ -771,12 +771,26 @@ function RenameSubdirs() {
   const [selectedDirs, setSelectedDirs] = useState(new Set())
   const [directImages, setDirectImages] = useState([])
   const [startNum, setStartNum] = useState(1)
+  const [renamePattern, setRenamePattern] = useState('{name}({num})')
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [expandedDir, setExpandedDir] = useState(null)
   const [dirImages, setDirImages] = useState({})
 
   const imageExts = new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'])
+
+  const patternPresets = [
+    { label: 'Tên(1)', value: '{name}({num})' },
+    { label: 'Tên - 1', value: '{name} - {num}' },
+    { label: 'Tên ( 1 )', value: '{name} ( {num} )' },
+    { label: 'Tên_1', value: '{name}_{num}' },
+    { label: '1 - Tên', value: '{num} - {name}' },
+    { label: 'Tùy chỉnh', value: '__custom__' },
+  ]
+
+  const getNewName = (baseName, num, ext) => {
+    return renamePattern.replace(/\{name\}/g, baseName).replace(/\{num\}/g, num) + '.' + ext
+  }
 
   const pickParentFolder = async () => {
     try {
@@ -873,7 +887,7 @@ function RenameSubdirs() {
 
       for (let i = 0; i < images.length; i++) {
         const img = images[i]
-        const newName = `${parentDir.name}(${startNum + i}).${img.ext}`
+        const newName = getNewName(parentDir.name, startNum + i, img.ext)
         setProgress({ current: i + 1, total: images.length })
         setStatus(`Đang đổi ${i + 1}/${images.length}: ${img.name} → ${newName}`)
 
@@ -925,7 +939,7 @@ function RenameSubdirs() {
 
       for (let i = 0; i < images.length; i++) {
         const img = images[i]
-        const newName = `${dir.name}(${startNum + i}).${img.ext}`
+        const newName = getNewName(dir.name, startNum + i, img.ext)
         done++
         setProgress({ current: done, total: totalImages })
         setStatus(`Đang đổi ${done}/${totalImages}: ${dir.name}/${img.name} → ${newName}`)
@@ -966,56 +980,77 @@ function RenameSubdirs() {
       </Card>
 
       {parentDir && (
-        <Card title={<Space><ScissorOutlined /><Text strong>2. Chọn chế độ</Text></Space>}>
-          <Radio.Group value={mode} onChange={(e) => { setMode(e.target.value); if (e.target.value === 'subdirs') setDirectImages([]); else setSubdirs([]) }}>
-            <Space direction="vertical">
-              <Radio value="subdirs">
-                <Text strong>Nhiều thư mục con</Text>
-                <Text type="secondary" className="ml-2 text-sm">1 thư mục lớn → nhiều thư mục con → ảnh</Text>
-              </Radio>
-              <Radio value="direct">
-                <Text strong>Ảnh trực tiếp</Text>
-                <Text type="secondary" className="ml-2 text-sm">thư mục chứa ảnh, không có thư mục con</Text>
-              </Radio>
-            </Space>
-          </Radio.Group>
-        </Card>
-      )}
-
-      {parentDir && mode === 'subdirs' && (
-        <Card title={<Text strong>3. Quét thư mục con</Text>}>
-          <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanSubdirs}>
-            Quét thư mục con
-          </Button>
-        </Card>
-      )}
-
-      {parentDir && mode === 'direct' && (
-        <Card title={<Text strong>3. Quét ảnh</Text>}>
-          <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanDirectImages}>
-            Quét ảnh trong thư mục
-          </Button>
-        </Card>
+        <Row gutter={16}>
+          <Col span={8}>
+            <Card title={<Space><ScissorOutlined /><Text strong>2. Chọn chế độ</Text></Space>} size="small">
+              <Radio.Group value={mode} onChange={(e) => { setMode(e.target.value); if (e.target.value === 'subdirs') setDirectImages([]); else setSubdirs([]) }}>
+                <Space direction="vertical">
+                  <Radio value="subdirs">
+                    <Text strong>Nhiều thư mục con</Text>
+                    <Text type="secondary" className="ml-2 text-xs">1 thư mục lớn → nhiều thư mục con → ảnh</Text>
+                  </Radio>
+                  <Radio value="direct">
+                    <Text strong>Ảnh trực tiếp</Text>
+                    <Text type="secondary" className="ml-2 text-xs">thư mục chứa ảnh, không có thư mục con</Text>
+                  </Radio>
+                </Space>
+              </Radio.Group>
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card title={<Text strong>3. Quét</Text>} size="small">
+              {mode === 'subdirs' ? (
+                <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanSubdirs} block>
+                  Quét thư mục con
+                </Button>
+              ) : (
+                <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanDirectImages} block>
+                  Quét ảnh trong thư mục
+                </Button>
+              )}
+            </Card>
+          </Col>
+          <Col span={8}>
+            <Card title={<Text strong>4. Kiểu đặt tên</Text>} size="small">
+              <div className="mb-2">
+                <Text strong className="block text-xs mb-1">Số bắt đầu</Text>
+                <InputNumber min={0} value={startNum} onChange={(v) => setStartNum(v || 0)} className="w-full" />
+              </div>
+              <div className="mb-2">
+                <Text strong className="block text-xs mb-1">Mẫu tên</Text>
+                <Select
+                  value={patternPresets.find(p => p.value === renamePattern) ? renamePattern : undefined}
+                  onChange={(v) => setRenamePattern(v)}
+                  style={{ width: '100%' }}
+                  className="mb-1"
+                  options={patternPresets}
+                  placeholder="Chọn mẫu có sẵn"
+                />
+                <Input
+                  value={renamePattern}
+                  onChange={(e) => setRenamePattern(e.target.value)}
+                  placeholder="{name}({num})"
+                />
+              </div>
+              <Text type="secondary" className="block text-xs">
+                Preview: <Text code>{getNewName(parentDir.name, startNum, 'jpg')}</Text>, <Text code>{getNewName(parentDir.name, startNum + 1, 'jpg')}</Text>
+              </Text>
+              <Text type="secondary" className="block text-xs mt-1">
+                {'{name}'}=tên thư mục, {'{num}'}=số thứ tự
+              </Text>
+            </Card>
+          </Col>
+        </Row>
       )}
 
       {mode === 'direct' && directImages.length > 0 && (
         <>
-          <Card title={<Text strong>4. Nhập số bắt đầu</Text>}>
-            <div className="mb-2">
-              <Text strong className="block mb-1">Số bắt đầu cho ảnh đầu tiên</Text>
-              <InputNumber min={0} value={startNum} onChange={(v) => setStartNum(v || 0)} />
-              <Text type="secondary" className="block mt-2">
-                Ảnh sẽ có tên: <Text code>{parentDir.name}({startNum}).jpg</Text>, <Text code>{parentDir.name}({startNum + 1}).jpg</Text>, ...
-              </Text>
-            </div>
-          </Card>
-
           <Card title={<Space><Text strong>5. Danh sách ảnh ({directImages.length})</Text></Space>}>
             <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-2">
               {directImages.map((img, i) => (
                 <div key={i} className="flex items-center gap-2 px-3 py-2">
                   <Tag color="success">{img.name}</Tag>
-                  <Text type="primary">→ {parentDir.name}({startNum + i}).{img.ext}</Text>
+                  <Text type="primary">→ {getNewName(parentDir.name, startNum + i, img.ext)}</Text>
                 </div>
               ))}
             </div>
@@ -1029,15 +1064,6 @@ function RenameSubdirs() {
 
       {mode === 'subdirs' && subdirs.length > 0 && (
         <>
-          <Card title={<Text strong>4. Nhập số bắt đầu</Text>}>
-            <div className="mb-2">
-              <Text strong className="block mb-1">Số bắt đầu cho ảnh đầu tiên</Text>
-              <InputNumber min={0} value={startNum} onChange={(v) => setStartNum(v || 0)} />
-              <Text type="secondary" className="block mt-2">
-                Ảnh sẽ có tên: <Text code>TênThưMục({startNum}).jpg</Text>, <Text code>TênThưMục({startNum + 1}).jpg</Text>, ...
-              </Text>
-            </div>
-          </Card>
 
           <Card title={<Space><Text strong>5. Chọn thư mục con cần xử lý</Text></Space>}>
             <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
@@ -1071,7 +1097,7 @@ function RenameSubdirs() {
                       {dirImages[i].map((img, j) => (
                         <div key={j} className="flex items-center gap-2 px-2 py-1">
                           <Tag color="success">{img.name}</Tag>
-                          <Text type="primary" className="text-sm">→ {dir.name}({startNum + j}).{img.ext}</Text>
+                          <Text type="primary" className="text-sm">→ {getNewName(dir.name, startNum + j, img.ext)}</Text>
                         </div>
                       ))}
                     </div>
