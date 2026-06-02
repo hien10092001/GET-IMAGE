@@ -69,12 +69,22 @@ body {
 
 .ant-menu-horizontal .ant-menu-item:nth-child(4):hover,
 .ant-menu-horizontal .ant-menu-item:nth-child(4).ant-menu-item-selected {
-  box-shadow: inset 0 -3px 0 #8e44ad;
+  box-shadow: inset 0 -3px 0 #e67e22;
 }
 
 .ant-menu-horizontal .ant-menu-item:nth-child(5):hover,
 .ant-menu-horizontal .ant-menu-item:nth-child(5).ant-menu-item-selected {
-  box-shadow: inset 0 -3px 0 #e67e22;
+  box-shadow: inset 0 -3px 0 #13c2c2;
+}
+
+.ant-menu-horizontal .ant-menu-item:nth-child(6):hover,
+.ant-menu-horizontal .ant-menu-item:nth-child(6).ant-menu-item-selected {
+  box-shadow: inset 0 -3px 0 #722ed1;
+}
+
+.ant-menu-horizontal .ant-menu-item:nth-child(7):hover,
+.ant-menu-horizontal .ant-menu-item:nth-child(7).ant-menu-item-selected {
+  box-shadow: inset 0 -3px 0 #eb2f96;
 }
 
 .ant-menu-horizontal .ant-menu-item-selected::after {
