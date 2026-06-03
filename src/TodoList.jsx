@@ -154,9 +154,20 @@ function TodoList() {
     }
   }
 
-  const handleSettingsClose = () => {
+  const handleSettingsClose = async () => {
     setSettingsOpen(false)
     delete seededRef.current[selectedDate]
+    try {
+      const res = await fetch(`${API}?date=${selectedDate}`)
+      if (res.ok) {
+        const todos = await res.json()
+        await Promise.all(todos.map(t =>
+          fetch(`${API}/${t._id}`, { method: 'DELETE' }).catch(() => {})
+        ))
+      }
+    } catch (e) { /* ignore */ }
+    const cfg = loadDefaults()
+    await seedDate(selectedDate, cfg)
   }
 
   return (

@@ -167,6 +167,10 @@ function ExcelMatcher() {
       }
 
       setExcelData(codes)
+      setMatchedFiles([])
+      setSelectedFiles(new Set())
+      setNotFoundCodes([])
+      setProgress({ current: 0, total: 0 })
       setStatus(`Đã đọc ${codes.length} mã từ Excel`)
     } catch (err) {
       setStatus('Lỗi đọc file: ' + err.message)
@@ -268,8 +272,13 @@ function ExcelMatcher() {
       }
 
       setStatus('Hoàn thành! Đã chuyển tất cả file vào thư mục đích và xóa khỏi thư mục tổng.')
+      setMatchedFiles([])
+      setSelectedFiles(new Set())
+      setNotFoundCodes([])
+      setProgress({ current: 0, total: 0 })
     } catch (err) {
       setStatus('Lỗi chuyển: ' + err.message)
+      setProgress({ current: 0, total: 0 })
     }
   }
 

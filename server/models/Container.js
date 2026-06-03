@@ -53,6 +53,26 @@ const containerSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  hinhIn: {
+    type: Boolean,
+    default: false,
+  },
+  hinhSC: {
+    type: Boolean,
+    default: false,
+  },
+  folderIn: {
+    type: String,
+    default: '',
+  },
+  folderSC: {
+    type: String,
+    default: '',
+  },
+  folderSC2: {
+    type: String,
+    default: '',
+  },
   createdBy: {
     type: String,
     default: 'system',

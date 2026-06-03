@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UnlockOutlined } from '@ant-design/icons'
+import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -161,8 +161,8 @@ function LockProduction() {
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine' },
     { title: 'Size', dataIndex: 'size', key: 'size' },
     { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 120 },
-    { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
+    { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
     {
       title: 'Hành động', key: 'action', width: 100,
       render: (_, record) => (
@@ -215,9 +215,59 @@ function LockProduction() {
             </Radio.Group>
           </Col>
           <Col>
-            <Button type="primary" icon={<LockOutlined />} onClick={handleLock}>
+            <Button
+              type="primary"
+              icon={<LockOutlined />}
+              onClick={handleLock}
+              size="large"
+              style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', border: 'none', fontWeight: 600, boxShadow: '0 2px 8px rgba(102,126,234,0.4)' }}
+            >
               Chốt sản lượng
             </Button>
+          </Col>
+          <Col>
+            <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={(file) => {
+              const reader = new FileReader()
+              reader.onload = async (e) => {
+                try {
+                  const data = new Uint8Array(e.target.result)
+                  const wb = XLSX.read(data, { type: 'array' })
+                  const ws = wb.Sheets[wb.SheetNames[0]]
+                  const rows = XLSX.utils.sheet_to_json(ws, { header: 1 })
+                  if (rows.length < 2) { message.warning('File không có dữ liệu'); return }
+                  const header = rows[0].map(h => String(h).toLowerCase().trim())
+                  const ci = header.findIndex(h => /cont|soc/i.test(h))
+                  const si = header.findIndex(h => /hang|shipping|hãng|tàu/i.test(h))
+                  const zi = header.findIndex(h => /size/i.test(h))
+                  const li = header.findIndex(h => /phân|loại|location/i.test(h))
+                  const bi = header.findIndex(h => /bay/i.test(h))
+                  const ri = header.findIndex(h => /ghi|chú|remark/i.test(h))
+                  if (ci === -1) { message.error('Không tìm thấy cột Container No'); return }
+                  const items = rows.slice(1).filter(r => r[ci]).map(r => ({
+                    containerNo: String(r[ci]).toUpperCase().trim(),
+                    shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
+                    size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
+                    location: li >= 0 && r[li] ? String(r[li]).trim() : '',
+                    bay: bi >= 0 && r[bi] ? String(r[bi]).toUpperCase().trim() : '',
+                    remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
+                  })).filter(i => i.containerNo && i.shippingLine && i.size)
+                  if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
+                  const existing = locks.find(l => l.date === lockDate && l.shift === lockShift)
+                  if (existing) {
+                    await api.put(`/locks/${existing._id}/items`, { items })
+                    message.success(`Đã thêm ${items.length} container vào ca ${lockShift} ngày ${dayjs(lockDate).format('DD/MM/YYYY')}`)
+                  } else {
+                    await api.post('/locks', { date: lockDate, shift: lockShift, items })
+                    message.success(`Đã tạo phiếu và thêm ${items.length} container`)
+                  }
+                  fetchLocks()
+                } catch (err) { message.error('Lỗi đọc file: ' + err.message) }
+              }
+              reader.readAsArrayBuffer(file)
+              return false
+            }}>
+              <Button type="primary" icon={<UploadOutlined />} style={{ background: '#52c41a', borderColor: '#52c41a' }}>Tải Excel</Button>
+            </Upload>
           </Col>
         </Row>
       </Card>
@@ -244,16 +294,52 @@ function LockProduction() {
           <>
             <div className="flex items-center justify-between mb-3">
               <Space>
-                <Button type="primary" icon={<PlusOutlined />} onClick={() => {
+                <Button type="primary" icon={<PlusOutlined />} style={{ background: '#1890ff', borderColor: '#1890ff' }} onClick={() => {
                   setEditingItem(null)
                   itemForm.resetFields()
                   setItemModalOpen(true)
                 }}>
                   Thêm container
                 </Button>
-                <Button icon={<ExportOutlined />} onClick={exportLockExcel}>
+                <Button type="primary" icon={<ExportOutlined />} style={{ background: '#52c41a', borderColor: '#52c41a' }} onClick={exportLockExcel}>
                   Xuất Excel
                 </Button>
+                <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={(file) => {
+                  const reader = new FileReader()
+                  reader.onload = async (e) => {
+                    try {
+                      const data = new Uint8Array(e.target.result)
+                      const wb = XLSX.read(data, { type: 'array' })
+                      const ws = wb.Sheets[wb.SheetNames[0]]
+                      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 })
+                      if (rows.length < 2) { message.warning('File không có dữ liệu'); return }
+                      const header = rows[0].map(h => String(h).toLowerCase().trim())
+                      const ci = header.findIndex(h => /cont|soc/i.test(h))
+                      const si = header.findIndex(h => /hang|shipping|hãng|tàu/i.test(h))
+                      const zi = header.findIndex(h => /size/i.test(h))
+                      const li = header.findIndex(h => /phân|loại|location/i.test(h))
+                      const bi = header.findIndex(h => /bay/i.test(h))
+                      const ri = header.findIndex(h => /ghi|chú|remark/i.test(h))
+                      if (ci === -1) { message.error('Không tìm thấy cột Container No'); return }
+                      const items = rows.slice(1).filter(r => r[ci]).map(r => ({
+                        containerNo: String(r[ci]).toUpperCase().trim(),
+                        shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
+                        size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
+                        location: li >= 0 && r[li] ? String(r[li]).trim() : '',
+                        bay: bi >= 0 && r[bi] ? String(r[bi]).toUpperCase().trim() : '',
+                        remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
+                      })).filter(i => i.containerNo && i.shippingLine && i.size)
+                      if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
+                      const res = await api.put(`/locks/${currentLock._id}/items`, { items })
+                      setCurrentLock(res.data)
+                      message.success(`Đã thêm ${items.length} container`)
+                    } catch (err) { message.error('Lỗi đọc file: ' + err.message) }
+                  }
+                  reader.readAsArrayBuffer(file)
+                  return false
+                }}>
+                  <Button type="primary" icon={<UploadOutlined />} style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>Tải Excel</Button>
+                </Upload>
               </Space>
               <Popconfirm title="Xóa toàn bộ phiếu này?" onConfirm={() => handleDeleteLock(currentLock._id)} okText="Xóa" cancelText="Hủy">
                 <Button danger icon={<DeleteOutlined />}>Xóa phiếu</Button>
@@ -273,13 +359,13 @@ function LockProduction() {
                 <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
               </Col>
               <Col span={3}>
-                <Input placeholder="Phân Loại" value={addLocation} onChange={e => setAddLocation(e.target.value)} />
+                <Input placeholder="Phân Loại" value={addLocation} onChange={e => setAddLocation(e.target.value.toUpperCase())} />
+              </Col>
+              <Col span={4}>
+                <Input placeholder="Ghi chú" value={addRemark} onChange={e => setAddRemark(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
               </Col>
               <Col span={3}>
                 <Input placeholder="Bay" value={addBay} onChange={e => setAddBay(e.target.value.toUpperCase())} />
-              </Col>
-              <Col span={4}>
-                <Input placeholder="Ghi chú" value={addRemark} onChange={e => setAddRemark(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
               </Col>
               <Col>
                 <Button type="primary" icon={<PlusOutlined />} onClick={handleAddItem}>Thêm</Button>
@@ -334,19 +420,19 @@ function LockProduction() {
             </Col>
             <Col span={12}>
               <Form.Item name="location" label="Phân Loại">
-                <Input placeholder="VD: Hư hỏng nặng / Nhẹ / ..." />
+                <Input placeholder="VD: Hư hỏng nặng / Nhẹ / ..." onInput={e => e.target.value = e.target.value.toUpperCase()} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
-              <Form.Item name="bay" label="Bay">
-                <Input placeholder="VD: A01" />
+              <Form.Item name="remark" label="Ghi chú">
+                <Input placeholder="Ghi chú" onInput={e => e.target.value = e.target.value.toUpperCase()} />
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="remark" label="Ghi chú">
-                <Input placeholder="Ghi chú" />
+              <Form.Item name="bay" label="Bay">
+                <Input placeholder="VD: A01" onInput={e => e.target.value = e.target.value.toUpperCase()} />
               </Form.Item>
             </Col>
           </Row>

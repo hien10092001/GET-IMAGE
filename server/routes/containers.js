@@ -6,19 +6,26 @@ const router = Router()
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { containerNo, shippingLine, size, bay, location, remark } = req.body
+    const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
     if (!containerNo || !shippingLine || !size) {
       return res.status(400).json({ message: 'Thiếu thông tin bắt buộc' })
     }
-    const container = await Container.create({
+    const payload = {
       containerNo: containerNo.toUpperCase(),
       shippingLine,
       size,
       bay,
       location,
       remark,
+      hinhIn,
+      hinhSC,
+      folderIn,
+      folderSC,
+      folderSC2,
       createdBy: req.user.username,
-    })
+    }
+    if (createdAt) payload.createdAt = createdAt
+    const container = await Container.create(payload)
     res.status(201).json(container)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -132,7 +139,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const { containerNo, shippingLine, size, bay, location, remark } = req.body
+    const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
     const update = {}
     if (containerNo !== undefined) update.containerNo = containerNo.toUpperCase()
     if (shippingLine !== undefined) update.shippingLine = shippingLine
@@ -140,10 +147,25 @@ router.put('/:id', authMiddleware, async (req, res) => {
     if (bay !== undefined) update.bay = bay
     if (location !== undefined) update.location = location
     if (remark !== undefined) update.remark = remark
+    if (createdAt !== undefined) update.createdAt = createdAt
+    if (hinhIn !== undefined) update.hinhIn = hinhIn
+    if (hinhSC !== undefined) update.hinhSC = hinhSC
+    if (folderIn !== undefined) update.folderIn = folderIn
+    if (folderSC !== undefined) update.folderSC = folderSC
+    if (folderSC2 !== undefined) update.folderSC2 = folderSC2
 
     const container = await Container.findByIdAndUpdate(req.params.id, update, { new: true })
     if (!container) return res.status(404).json({ message: 'Không tìm thấy container' })
     res.json(container)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+router.delete('/all', authMiddleware, roleMiddleware('Admin', 'Supervisor'), async (req, res) => {
+  try {
+    const result = await Container.deleteMany({})
+    res.json({ message: `Đã xóa tất cả ${result.deletedCount} container` })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -163,74 +185,100 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
   try {
     const now = new Date()
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const todayEnd = new Date(todayStart)
-    todayEnd.setDate(todayEnd.getDate() + 1)
+    const todayEnd = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1)
+    const yesterdayStart = new Date(todayStart); yesterdayStart.setDate(yesterdayStart.getDate() - 1)
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
     const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
 
     const [
       totalContainers,
       todayContainers,
+      yesterdayContainers,
       monthContainers,
-      liftOnTotal,
-      liftOffTotal,
-      shiftMoveTotal,
+      lastMonthContainers,
     ] = await Promise.all([
       Container.countDocuments(),
       Container.countDocuments({ createdAt: { $gte: todayStart, $lt: todayEnd } }),
+      Container.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
       Container.countDocuments({ createdAt: { $gte: monthStart, $lt: monthEnd } }),
-      Container.countDocuments({ liftOn: true }),
-      Container.countDocuments({ liftOff: true }),
-      Container.countDocuments({ shiftMove: true }),
+      Container.countDocuments({ createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd } }),
     ])
 
-    const byDay = await Container.aggregate([
-      { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
-          total: { $sum: 1 },
-          liftOn: { $sum: { $cond: ['$liftOn', 1, 0] } },
-          liftOff: { $sum: { $cond: ['$liftOff', 1, 0] } },
-          shiftMove: { $sum: { $cond: ['$shiftMove', 1, 0] } },
+    const [byDay, byMonth, byWeek, byShippingLine, bySize, topContainers, dailyDetail] = await Promise.all([
+      Container.aggregate([
+        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, total: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+      ]),
+      Container.aggregate([
+        { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }, total: { $sum: 1 } } },
+        { $sort: { _id: 1 } },
+        { $limit: 12 },
+      ]),
+      Container.aggregate([
+        {
+          $group: {
+            _id: { week: { $isoWeek: '$createdAt' }, year: { $isoWeekYear: '$createdAt' } },
+            total: { $sum: 1 },
+            startDate: { $min: '$createdAt' },
+            endDate: { $max: '$createdAt' },
+          },
         },
-      },
-      { $sort: { _id: 1 } },
-    ])
-
-    const byMonth = await Container.aggregate([
-      {
-        $group: {
-          _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } },
-          total: { $sum: 1 },
+        { $sort: { '_id.year': -1, '_id.week': -1 } },
+        { $limit: 12 },
+        {
+          $project: {
+            _id: 0,
+            week: '$_id.week',
+            year: '$_id.year',
+            total: 1,
+            label: { $concat: [{ $toString: '$_id.week' }, '/', { $toString: '$_id.year' }] },
+            startDate: 1,
+            endDate: 1,
+          },
         },
-      },
-      { $sort: { _id: 1 } },
-      { $limit: 12 },
-    ])
-
-    const byShippingLine = await Container.aggregate([
-      { $group: { _id: '$shippingLine', total: { $sum: 1 } } },
-      { $sort: { total: -1 } },
-      { $limit: 10 },
-    ])
-
-    const bySize = await Container.aggregate([
-      { $group: { _id: '$size', total: { $sum: 1 } } },
-      { $sort: { total: -1 } },
+      ]),
+      Container.aggregate([
+        { $group: { _id: '$shippingLine', total: { $sum: 1 } } },
+        { $sort: { total: -1 } },
+        { $limit: 10 },
+      ]),
+      Container.aggregate([
+        { $group: { _id: '$size', total: { $sum: 1 } } },
+        { $sort: { total: -1 } },
+      ]),
+      Container.aggregate([
+        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $group: { _id: { containerNo: '$containerNo', shippingLine: '$shippingLine', size: '$size', location: '$location', bay: '$bay', remark: '$remark' }, count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+        { $limit: 5 },
+        { $replaceRoot: { newRoot: { $mergeObjects: ['$_id', { count: '$count' }] } } },
+      ]),
+      Container.aggregate([
+        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $group: { _id: { date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, shippingLine: '$shippingLine' }, count: { $sum: 1 } } },
+        { $sort: { '_id.date': 1, count: -1 } },
+        { $group: { _id: '$_id.date', shippingLines: { $push: { name: '$_id.shippingLine', count: '$count' } }, total: { $sum: '$count' } } },
+        { $sort: { _id: 1 } },
+        { $project: { _id: 0, date: '$_id', total: 1, shippingLines: 1 } },
+      ]),
     ])
 
     res.json({
       totalContainers,
       todayContainers,
+      yesterdayContainers,
       monthContainers,
-      liftOnTotal,
-      liftOffTotal,
-      shiftMoveTotal,
+      lastMonthContainers,
       byDay,
       byMonth,
+      byWeek,
       byShippingLine,
       bySize,
+      topContainers,
+      dailyDetail,
     })
   } catch (err) {
     res.status(500).json({ message: err.message })
