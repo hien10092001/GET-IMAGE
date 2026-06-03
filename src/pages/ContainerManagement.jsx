@@ -519,6 +519,9 @@ function ContainerManagement() {
             </Upload>
           </Col>
           <Col xs={12} md={2}>
+            <Button icon={<EyeOutlined />} onClick={() => setViewRefOpen(true)} block>Xem Ton</Button>
+          </Col>
+          <Col xs={12} md={2}>
             <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={(file) => {
               const reader = new FileReader()
               reader.onload = (e) => {
