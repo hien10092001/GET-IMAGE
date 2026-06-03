@@ -127,6 +127,22 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
   }
 })
 
+// GET /api/containers/locations — map containerNo → unique location values
+router.get('/locations', authMiddleware, async (req, res) => {
+  try {
+    const result = await Container.aggregate([
+      { $match: { location: { $ne: '' } } },
+      { $group: { _id: { containerNo: '$containerNo', location: '$location' } } },
+      { $group: { _id: '$_id.containerNo', locations: { $addToSet: '$_id.location' } } },
+    ])
+    const map = {}
+    result.forEach(r => { map[r._id] = r.locations })
+    res.json(map)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const container = await Container.findById(req.params.id)

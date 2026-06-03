@@ -1,7 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined } from '@ant-design/icons'
 import TodoList from './TodoList'
 import Login from './pages/Login'
 import './App.css'
@@ -9,6 +9,7 @@ import './App.css'
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const ContainerManagement = lazy(() => import('./pages/ContainerManagement'))
 const LockProduction = lazy(() => import('./pages/LockProduction'))
+const ImageCheck = lazy(() => import('./pages/ImageCheck'))
 
 const { Dragger } = Upload
 const { Title, Text } = Typography
@@ -54,6 +55,7 @@ function App() {
     dashboard: '#722ed1',
     containers: '#eb2f96',
     sanluong: '#13c2c2',
+    imagecheck: '#fa8c16',
   }
 
   const handleLogin = (userData) => setUser(userData)
@@ -74,6 +76,7 @@ function App() {
     { key: 'dashboard', label: <span style={{ color: activeTab === 'dashboard' ? tabColors.dashboard : undefined }}><DashboardOutlined style={{ color: tabColors.dashboard }} /> Dashboard</span> },
     { key: 'containers', label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}><ContainerOutlined style={{ color: tabColors.containers }} /> Containers</span> },
     { key: 'sanluong', label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}><LockOutlined style={{ color: tabColors.sanluong }} /> Sản lượng</span> },
+    { key: 'imagecheck', label: <span style={{ color: activeTab === 'imagecheck' ? tabColors.imagecheck : undefined }}><FileImageOutlined style={{ color: tabColors.imagecheck }} /> Check Hình</span> },
   ]
 
   return (
@@ -131,6 +134,7 @@ function App() {
             {activeTab === 'dashboard' && user && <Dashboard />}
             {activeTab === 'containers' && user && <ContainerManagement />}
             {activeTab === 'sanluong' && user && <LockProduction />}
+            {activeTab === 'imagecheck' && <ImageCheck />}
           </Suspense>
         </Content>
       </Layout>

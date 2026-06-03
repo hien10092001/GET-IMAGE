@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, Checkbox } from 'antd'
+import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, Checkbox, AutoComplete } from 'antd'
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, UploadOutlined, LockOutlined, CopyOutlined, FolderOpenOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
@@ -40,6 +40,8 @@ function ContainerManagement() {
   const [lockDate, setLockDate] = useState(dayjs().format('YYYY-MM-DD'))
   const [lockShift, setLockShift] = useState('sáng')
   const [frequencies, setFrequencies] = useState({})
+  const [locationHistory, setLocationHistory] = useState({})
+  const [locationOptions, setLocationOptions] = useState([])
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewData, setPreviewData] = useState([])
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -48,7 +50,7 @@ function ContainerManagement() {
   const [form] = Form.useForm()
   const searchRef = useRef(null)
   const addNoRef = useRef(null)
-  const folderInHandleRef = useRef(null)
+  const folderInHandlesRef = useRef([])
   const folderSCHandlesRef = useRef([])
 
   useEffect(() => {
@@ -61,13 +63,12 @@ function ContainerManagement() {
 
   const fetchData = (p, ps) => {
     queueMicrotask(() => setLoading(true))
-    const params = { page: p || page, limit: ps || pageSize, sort: '-createdAt' }
+    const params = { page: p || page, limit: ps || pageSize, sort: 'createdAt' }
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
     api.get('/containers', { params }).then((res) => {
-      const sorted = [...res.data.data].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-      setData(sorted)
+      setData(res.data.data)
       setTotal(res.data.total)
     }).catch(() => {
       message.error('Lỗi tải dữ liệu')
@@ -77,12 +78,25 @@ function ContainerManagement() {
   }
 
   const fetchFrequencies = () => {
-    api.get('/containers/frequencies').then(res => setFrequencies(res.data)).catch(() => {})
+    Promise.all([
+      api.get('/containers/frequencies'),
+      api.get('/locks/frequencies'),
+    ]).then(([contRes, lockRes]) => {
+      const combined = {}
+      Object.entries(contRes.data).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v })
+      Object.entries(lockRes.data).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v })
+      setFrequencies(combined)
+    }).catch(() => {})
+  }
+
+  const fetchLocationHistory = () => {
+    api.get('/containers/locations').then(res => setLocationHistory(res.data)).catch(() => {})
   }
 
   useEffect(() => {
     fetchData()
     fetchFrequencies()
+    fetchLocationHistory()
   }, [page, pageSize, search, filters])
 
   const openEdit = (record) => {
@@ -112,7 +126,7 @@ function ContainerManagement() {
         bay: addBay,
         location: addLocation,
         remark: addRemark,
-        folderIn: addFolderIn,
+        folderIn: addFolderIn.split('; ')[0] || '',
         folderSC: addFolderSC.split('; ')[0] || '',
         folderSC2: addFolderSC.split('; ')[1] || '',
         hinhIn: addHinhIn,
@@ -129,9 +143,10 @@ function ContainerManagement() {
       setAddHinhIn(false)
       setAddHinhSC(false)
       addNoRef.current?.focus()
-      setPage(1)
-      setData(prev => [res.data, ...prev])
-      setTotal(prev => prev + 1)
+      const lastPage = Math.ceil((total + 1) / pageSize)
+      setPage(lastPage)
+      fetchData(lastPage)
+      fetchFrequencies()
     } catch (e) {
       message.error(e.response?.data?.message || 'Lỗi thêm container')
     }
@@ -149,6 +164,7 @@ function ContainerManagement() {
       message.success('Cập nhật thành công')
       setModalOpen(false)
       fetchData()
+      fetchFrequencies()
     } catch (e) {
       if (e.response) message.error(e.response.data?.message || 'Lỗi')
     } finally {
@@ -161,6 +177,7 @@ function ContainerManagement() {
       await api.delete(`/containers/${id}`)
       message.success('Đã xóa container')
       fetchData()
+      fetchFrequencies()
     } catch (e) {
       message.error(e.response?.data?.message || 'Lỗi xóa')
     }
@@ -173,6 +190,7 @@ function ContainerManagement() {
       setData([])
       setTotal(0)
       setPage(1)
+      fetchFrequencies()
     } catch (e) {
       message.error(e.response?.data?.message || 'Lỗi xóa tất cả')
     }
@@ -189,40 +207,22 @@ function ContainerManagement() {
   }
 
   const autoCheckHinh = async (containerNo) => {
-    const inMatch = await checkFolderForContainer(folderInHandleRef.current, containerNo)
+    const inResults = await Promise.all(folderInHandlesRef.current.map(h => checkFolderForContainer(h, containerNo)))
     const scResults = await Promise.all(folderSCHandlesRef.current.map(h => checkFolderForContainer(h, containerNo)))
-    setAddHinhIn(inMatch)
+    setAddHinhIn(inResults.some(Boolean))
     setAddHinhSC(scResults.some(Boolean))
   }
 
-  const handlePickFolder = async (setter, handleRef) => {
+  const handlePickFolderIn = async () => {
     try {
-      if (window.showDirectoryPicker) {
-        const dirHandle = await window.showDirectoryPicker()
-        handleRef.current = dirHandle
-        setter(dirHandle.name)
-        if (addContainerNo) autoCheckHinh(addContainerNo)
-        if (data.length) scanFolders()
-      } else {
-        const input = document.createElement('input')
-        input.type = 'file'
-        input.setAttribute('webkitdirectory', '')
-        input.setAttribute('directory', '')
-        input.style.display = 'none'
-        input.addEventListener('change', () => {
-          if (input.files.length > 0) {
-            const parts = input.files[0].webkitRelativePath.split('/')
-            setter(parts[0] || 'folder')
-          }
-        })
-        document.body.appendChild(input)
-        input.click()
-        document.body.removeChild(input)
-      }
+      if (!window.showDirectoryPicker) return
+      const dirHandle = await window.showDirectoryPicker()
+      folderInHandlesRef.current = [...folderInHandlesRef.current, dirHandle]
+      setAddFolderIn(prev => prev ? prev + '; ' + dirHandle.name : dirHandle.name)
+      if (addContainerNo) autoCheckHinh(addContainerNo)
+      if (data.length) scanFolders()
     } catch (err) {
-      if (err.name !== 'AbortError' && err.name !== 'SecurityError') {
-        message.error('Không thể chọn folder')
-      }
+      if (err.name !== 'AbortError') message.error('Không thể chọn folder')
     }
   }
 
@@ -230,13 +230,8 @@ function ContainerManagement() {
     try {
       if (!window.showDirectoryPicker) return
       const dirHandle = await window.showDirectoryPicker()
-      if (folderSCHandlesRef.current.length >= 2) {
-        folderSCHandlesRef.current = [dirHandle]
-        setAddFolderSC(dirHandle.name)
-      } else {
-        folderSCHandlesRef.current = [...folderSCHandlesRef.current, dirHandle]
-        setAddFolderSC(prev => prev ? prev + '; ' + dirHandle.name : dirHandle.name)
-      }
+      folderSCHandlesRef.current = [...folderSCHandlesRef.current, dirHandle]
+      setAddFolderSC(prev => prev ? prev + '; ' + dirHandle.name : dirHandle.name)
       if (addContainerNo) autoCheckHinh(addContainerNo)
       if (data.length) scanFolders()
     } catch (err) {
@@ -245,14 +240,14 @@ function ContainerManagement() {
   }
 
   const scanFolders = async () => {
-    if (!folderInHandleRef.current && !folderSCHandlesRef.current.length) {
+    if (!folderInHandlesRef.current.length && !folderSCHandlesRef.current.length) {
       message.warning('Chưa chọn folder để quét')
       return
     }
     const hide = message.loading('Đang quét folder...', 0)
     let updated = 0
     for (const item of data) {
-      const inMatch = folderInHandleRef.current ? await checkFolderForContainer(folderInHandleRef.current, item.containerNo) : false
+      const inMatch = folderInHandlesRef.current.length ? (await Promise.all(folderInHandlesRef.current.map(h => checkFolderForContainer(h, item.containerNo)))).some(Boolean) : false
       const scMatch = folderSCHandlesRef.current.length ? (await Promise.all(folderSCHandlesRef.current.map(h => checkFolderForContainer(h, item.containerNo)))).some(Boolean) : false
       const updates = {}
       if (inMatch !== !!item.hinhIn) updates.hinhIn = inMatch
@@ -333,11 +328,19 @@ function ContainerManagement() {
 
   const handleAddNoChange = (v) => {
     setAddContainerNo(v)
+    setLocationOptions([])
     const match = referenceData.find(r => r.containerNo === v)
     if (match) {
       if (match.shippingLine) setAddShippingLine(match.shippingLine)
       if (match.size) setAddSize(match.size)
       if (match.bay) setAddBay(match.bay)
+    }
+    const locs = v ? locationHistory[v] : undefined
+    if (locs && locs.length === 1) {
+      setAddLocation(locs[0])
+    } else if (locs && locs.length > 1) {
+      setAddLocation('')
+      setLocationOptions(locs)
     }
     if (v) autoCheckHinh(v)
     else { setAddHinhIn(false); setAddHinhSC(false) }
@@ -554,10 +557,12 @@ function ContainerManagement() {
                     createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
                   })).filter(i => i.containerNo && i.shippingLine && i.size)
                   if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
-                  Promise.all(items.map(i => api.post('/containers', i).catch(() => {}))).then(() => {
+                  Promise.all(items.map(i => api.post('/containers', i).catch(() => {}))).then(async () => {
                     message.success(`Đã thêm ${items.length} container từ Excel`)
-                    setPage(1)
-                    fetchData(1)
+                    const countRes = await api.get('/containers', { params: { limit: 1, sort: 'createdAt' } })
+                    const lastPage = Math.ceil(countRes.data.total / pageSize)
+                    setPage(lastPage)
+                    fetchData(lastPage)
                     fetchFrequencies()
                   })
                 } catch (err) { message.error('Lỗi đọc file: ' + err.message) }
@@ -613,7 +618,7 @@ function ContainerManagement() {
             <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
           </Col>
           <Col xs={12} sm={8} md={2}>
-            <Input placeholder="Phân Loại" value={addLocation} onChange={e => setAddLocation(e.target.value.toUpperCase())} />
+            <AutoComplete placeholder="Phân Loại" value={addLocation} options={locationOptions.map(o => ({ value: o }))} onChange={setAddLocation} onSelect={v => setAddLocation(v)} />
           </Col>
           <Col xs={12} sm={8} md={3}>
             <Input placeholder="Ghi chú" value={addRemark} onChange={e => setAddRemark(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
@@ -623,7 +628,7 @@ function ContainerManagement() {
           </Col>
           <Col xs={12} sm={8} md={3}>
             <Input placeholder="Folder Hình In" value={addFolderIn} readOnly
-              addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={() => handlePickFolder(setAddFolderIn, folderInHandleRef)} />}
+              addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderIn} />}
             />
           </Col>
           <Col xs={12} sm={8} md={3}>

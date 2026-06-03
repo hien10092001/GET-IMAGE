@@ -110,6 +110,21 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   }
 })
 
+router.get('/frequencies', authMiddleware, async (req, res) => {
+  try {
+    const result = await ProductionLock.aggregate([
+      { $unwind: '$items' },
+      { $group: { _id: '$items.containerNo', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ])
+    const map = {}
+    result.forEach(r => { map[r._id] = r.count })
+    res.json(map)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 router.get('/stats/dashboard', authMiddleware, async (req, res) => {
   try {
     const now = dayjs()
