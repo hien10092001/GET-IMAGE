@@ -143,6 +143,17 @@ router.get('/locations', authMiddleware, async (req, res) => {
   }
 })
 
+router.get('/by-number/:containerNo', authMiddleware, async (req, res) => {
+  try {
+    const containers = await Container.find({
+      containerNo: { $regex: '^' + req.params.containerNo.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') },
+    }).sort({ createdAt: -1 }).limit(20)
+    res.json(containers)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const container = await Container.findById(req.params.id)

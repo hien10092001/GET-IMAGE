@@ -141,15 +141,16 @@ function LockProduction() {
       'Container No': c.containerNo,
       'Hãng tàu': c.shippingLine,
       Size: c.size,
+      'Ngày tạo': dayjs(currentLock.createdAt).format('DD/MM/YYYY'),
       'Phân Loại': c.location || '',
-      Bay: c.bay || '',
       'Ghi chú': c.remark || '',
+      Bay: c.bay || '',
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'SanLuong')
     ws['!cols'] = [
-      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 10 }, { wch: 30 },
+      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 18 }, { wch: 20 }, { wch: 30 }, { wch: 10 },
     ]
     XLSX.writeFile(wb, `sanluong_${currentLock.date}_${currentLock.shift}.xlsx`)
     message.success('Xuất Excel thành công')

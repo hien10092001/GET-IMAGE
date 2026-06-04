@@ -125,6 +125,45 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
   }
 })
 
+// GET /api/locks/container-data/:containerNo — return unique container data from lock items
+router.get('/container-data/:containerNo', authMiddleware, async (req, res) => {
+  try {
+    const escaped = req.params.containerNo.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const result = await ProductionLock.aggregate([
+      { $unwind: '$items' },
+      { $match: { 'items.containerNo': { $regex: '^' + escaped } } },
+      { $sort: { 'items.containerNo': 1 } },
+      {
+        $group: {
+          _id: {
+            containerNo: '$items.containerNo',
+            shippingLine: '$items.shippingLine',
+            size: '$items.size',
+            location: '$items.location',
+            bay: '$items.bay',
+            remark: '$items.remark',
+          },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          containerNo: '$_id.containerNo',
+          shippingLine: '$_id.shippingLine',
+          size: '$_id.size',
+          location: '$_id.location',
+          bay: '$_id.bay',
+          remark: '$_id.remark',
+        },
+      },
+      { $limit: 30 },
+    ])
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 router.get('/stats/dashboard', authMiddleware, async (req, res) => {
   try {
     const now = dayjs()

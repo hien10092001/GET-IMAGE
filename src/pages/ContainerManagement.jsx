@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, Checkbox, AutoComplete } from 'antd'
+import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, AutoComplete, Spin, Image } from 'antd'
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, UploadOutlined, LockOutlined, CopyOutlined, FolderOpenOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
@@ -47,6 +47,13 @@ function ContainerManagement() {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [previewRowColors, setPreviewRowColors] = useState([])
   const [selectedRowKeys, setSelectedRowKeys] = useState([])
+  const [imgPreviewOpen, setImgPreviewOpen] = useState(false)
+  const [imgPreviewList, setImgPreviewList] = useState([])
+  const [imgPreviewTitle, setImgPreviewTitle] = useState('')
+  const [imgPreviewLoading, setImgPreviewLoading] = useState(false)
+  const [addContainerOptions, setAddContainerOptions] = useState([])
+  const suggestionTimerRef = useRef(null)
+  const suggestionQueryRef = useRef('')
   const [form] = Form.useForm()
   const searchRef = useRef(null)
   const addNoRef = useRef(null)
@@ -58,7 +65,10 @@ function ContainerManagement() {
   }, [referenceData])
 
   useEffect(() => {
-    return () => clearTimeout(searchTimerRef.current)
+    return () => {
+      clearTimeout(searchTimerRef.current)
+      clearTimeout(suggestionTimerRef.current)
+    }
   }, [])
 
   const fetchData = (p, ps) => {
@@ -78,14 +88,8 @@ function ContainerManagement() {
   }
 
   const fetchFrequencies = () => {
-    Promise.all([
-      api.get('/containers/frequencies'),
-      api.get('/locks/frequencies'),
-    ]).then(([contRes, lockRes]) => {
-      const combined = {}
-      Object.entries(contRes.data).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v })
-      Object.entries(lockRes.data).forEach(([k, v]) => { combined[k] = (combined[k] || 0) + v })
-      setFrequencies(combined)
+    api.get('/containers/frequencies').then(res => {
+      setFrequencies(res.data)
     }).catch(() => {})
   }
 
@@ -264,13 +268,48 @@ function ContainerManagement() {
     message.success(`Đã cập nhật ${updated} container`)
   }
 
-  const handleToggleHinh = async (id, field, value) => {
-    try {
-      await api.put(`/containers/${id}`, { [field]: value })
-      setData(prev => prev.map(item => item._id === id ? { ...item, [field]: value } : item))
-    } catch (e) {
-      message.error('Lỗi cập nhật')
+  const readImagesFromFolder = async (handles, containerNo) => {
+    const exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+    const urls = []
+    for (const handle of handles) {
+      try {
+        for await (const entry of handle.values()) {
+          if (entry.kind === 'directory' && entry.name.includes(containerNo)) {
+            for await (const fileEntry of entry.values()) {
+              if (fileEntry.kind === 'file') {
+                const name = fileEntry.name.toLowerCase()
+                if (exts.some(ext => name.endsWith(ext))) {
+                  const file = await fileEntry.getFile()
+                  urls.push(URL.createObjectURL(file))
+                }
+              }
+            }
+          }
+        }
+      } catch {}
     }
+    return urls
+  }
+
+  const handleOpenImages = async (record, type) => {
+    const label = type === 'in' ? 'Hình In' : 'Hình SC'
+    const handles = type === 'in' ? folderInHandlesRef.current : folderSCHandlesRef.current
+    if (!handles.length) {
+      message.warning(`Chưa chọn folder ${label.toLowerCase()}`)
+      return
+    }
+    setImgPreviewTitle(`${record.containerNo} - ${label}`)
+    setImgPreviewLoading(true)
+    setImgPreviewOpen(true)
+    const urls = await readImagesFromFolder(handles, record.containerNo)
+    setImgPreviewList(urls)
+    setImgPreviewLoading(false)
+  }
+
+  const handleCloseImgPreview = () => {
+    setImgPreviewOpen(false)
+    imgPreviewList.forEach(url => URL.revokeObjectURL(url))
+    setImgPreviewList([])
   }
 
   const importExcel = (file) => {
@@ -327,23 +366,87 @@ function ContainerManagement() {
   }
 
   const handleAddNoChange = (v) => {
+    v = v.toUpperCase()
     setAddContainerNo(v)
     setLocationOptions([])
-    const match = referenceData.find(r => r.containerNo === v)
-    if (match) {
-      if (match.shippingLine) setAddShippingLine(match.shippingLine)
-      if (match.size) setAddSize(match.size)
-      if (match.bay) setAddBay(match.bay)
+    if (!v) {
+      setAddShippingLine('')
+      setAddSize('')
+      setAddBay('')
+      setAddLocation('')
+      setAddRemark('')
+      setAddContainerOptions([])
+      autoCheckHinh('')
+      setAddHinhIn(false)
+      setAddHinhSC(false)
+      return
     }
-    const locs = v ? locationHistory[v] : undefined
-    if (locs && locs.length === 1) {
+    clearTimeout(suggestionTimerRef.current)
+    if (v.length >= 3) {
+      suggestionQueryRef.current = v
+      suggestionTimerRef.current = setTimeout(() => fetchSuggestions(v), 200)
+    }
+    autoCheckHinh(v)
+  }
+
+  const fetchSuggestions = async (containerNo) => {
+    try {
+      if (suggestionQueryRef.current !== containerNo) return
+      const [contRes, lockRes] = await Promise.all([
+        api.get(`/containers/by-number/${containerNo}`),
+        api.get(`/locks/container-data/${containerNo}`),
+      ])
+      if (suggestionQueryRef.current !== containerNo) return
+      const all = [
+        ...contRes.data.map(c => ({
+          containerNo: c.containerNo,
+          shippingLine: c.shippingLine,
+          size: c.size,
+          location: c.location || '',
+          bay: c.bay || '',
+          remark: c.remark || '',
+        })),
+        ...lockRes.data,
+      ]
+      if (!all.length) return
+      const groupBy = {}
+      all.forEach(item => {
+        const key = item.containerNo
+        if (!groupBy[key]) {
+          groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+        }
+        if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
+        if (item.size) groupBy[key].size = item.size
+        if (item.bay) groupBy[key].bay = item.bay
+        if (item.location) groupBy[key].locations.add(item.location)
+      })
+      const groups = Object.values(groupBy)
+      setAddContainerOptions(groups.map(g => ({
+        value: g.containerNo,
+        label: g.containerNo,
+        data: g,
+      })))
+      if (groups.length === 1) {
+        fillFieldsFromGroup(groups[0])
+      }
+    } catch {}
+  }
+
+  const fillFieldsFromGroup = (g) => {
+    setAddShippingLine(g.shippingLine)
+    setAddSize(g.size)
+    setAddBay(g.bay)
+    const locs = [...g.locations].filter(Boolean)
+    if (locs.length === 1) {
       setAddLocation(locs[0])
-    } else if (locs && locs.length > 1) {
+    } else if (locs.length > 1) {
       setAddLocation('')
       setLocationOptions(locs)
     }
-    if (v) autoCheckHinh(v)
-    else { setAddHinhIn(false); setAddHinhSC(false) }
+  }
+
+  const handleSelectContainerOption = (value, option) => {
+    fillFieldsFromGroup(option.data)
   }
 
   const exportExcel = async () => {
@@ -360,10 +463,10 @@ function ContainerManagement() {
         'Container No': c.containerNo,
         'Hãng tàu': c.shippingLine,
         Size: c.size,
+        'Ngày tạo': dayjs(c.createdAt).format('DD/MM/YYYY'),
         'Phân Loại': c.location || '',
         'Ghi chú': c.remark || '',
         Bay: String(c.bay ?? '').trim(),
-        'Ngày tạo': dayjs(c.createdAt).format('DD/MM/YYYY'),
       }))
       setPreviewData(data)
       const colors = ['#f0f5ff', '#fff7e6', '#f6ffed', '#fff0f6', '#e6fffb', '#f9f0ff', '#fffbe6']
@@ -388,8 +491,8 @@ function ContainerManagement() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Containers')
     ws['!cols'] = [
-      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 20 },
-      { wch: 30 }, { wch: 10 }, { wch: 18 },
+      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 18 },
+      { wch: 20 }, { wch: 30 }, { wch: 10 },
     ]
     XLSX.writeFile(wb, `containers_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`)
     message.success('Đã tải Excel')
@@ -438,11 +541,19 @@ function ContainerManagement() {
       title: 'Ngày tạo', dataIndex: 'createdAt', key: 'createdAt', width: 120, sorter: true,
       render: (v) => dayjs(v).format('DD/MM/YYYY'),
     },
-    { title: 'Hình In', dataIndex: 'hinhIn', key: 'hinhIn', width: 80, align: 'center',
-      render: (v, r) => <Checkbox checked={!!v} onChange={e => handleToggleHinh(r._id, 'hinhIn', e.target.checked)} />,
+    { title: 'Hình In', key: 'hinhIn', width: 80, align: 'center',
+      render: (_, r) => (
+        <Tag color={r.hinhIn ? 'green' : 'red'} style={{ cursor: 'pointer' }} onClick={() => handleOpenImages(r, 'in')}>
+          {r.hinhIn ? 'Có' : 'Không'}
+        </Tag>
+      ),
     },
-    { title: 'Hình SC', dataIndex: 'hinhSC', key: 'hinhSC', width: 80, align: 'center',
-      render: (v, r) => <Checkbox checked={!!v} onChange={e => handleToggleHinh(r._id, 'hinhSC', e.target.checked)} />,
+    { title: 'Hình SC', key: 'hinhSC', width: 80, align: 'center',
+      render: (_, r) => (
+        <Tag color={r.hinhSC ? 'green' : 'red'} style={{ cursor: 'pointer' }} onClick={() => handleOpenImages(r, 'sc')}>
+          {r.hinhSC ? 'Có' : 'Không'}
+        </Tag>
+      ),
     },
     {
       title: 'Hành động', key: 'action', width: 130, fixed: 'right',
@@ -524,7 +635,7 @@ function ContainerManagement() {
           <Col xs={12} md={2}>
             <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={(file) => {
               const reader = new FileReader()
-              reader.onload = (e) => {
+              reader.onload = async (e) => {
                 try {
                   const data = new Uint8Array(e.target.result)
                   const wb = XLSX.read(data, { type: 'array' })
@@ -560,14 +671,19 @@ function ContainerManagement() {
                     createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
                   })).filter(i => i.containerNo && i.shippingLine && i.size)
                   if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
-                  Promise.all(items.map(i => api.post('/containers', i).catch(() => {}))).then(async () => {
-                    message.success(`Đã thêm ${items.length} container từ Excel`)
+                  const results = await Promise.allSettled(items.map(i => api.post('/containers', i)))
+                  const added = results.filter(r => r.status === 'fulfilled').length
+                  const skipped = items.length - added
+                  if (added) {
+                    message.success(`Đã thêm ${added} container${skipped ? `, ${skipped} bỏ qua (đã tồn tại)` : ''} từ Excel`)
                     const countRes = await api.get('/containers', { params: { limit: 1, sort: 'createdAt' } })
                     const lastPage = Math.ceil(countRes.data.total / pageSize)
                     setPage(lastPage)
                     fetchData(lastPage)
                     fetchFrequencies()
-                  })
+                  } else {
+                    message.warning(`Không có container mới (${skipped} container đã tồn tại)`)
+                  }
                 } catch (err) { message.error('Lỗi đọc file: ' + err.message) }
               }
               reader.readAsArrayBuffer(file)
@@ -599,7 +715,16 @@ function ContainerManagement() {
         <Divider className="my-3" />
         <Row gutter={[8, 8]} align="middle">
           <Col xs={24} sm={8} md={4}>
-            <Input ref={addNoRef} placeholder="Container No" value={addContainerNo} onChange={e => handleAddNoChange(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+            <AutoComplete
+              ref={addNoRef}
+              value={addContainerNo}
+              options={addContainerOptions}
+              onChange={handleAddNoChange}
+              onSelect={handleSelectContainerOption}
+              placeholder="Container No"
+              style={{ width: '100%' }}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()}
+            />
           </Col>
           <Col xs={12} sm={8} md={3}>
             <Select placeholder="Hãng tàu" className="w-full" value={addShippingLine || undefined} onChange={setAddShippingLine}>
@@ -845,7 +970,7 @@ function ContainerManagement() {
         footer={<Space>
           <Button icon={<CopyOutlined />} onClick={() => {
             const rows = selectedRowKeys.length ? previewData.filter(r => selectedRowKeys.includes(r.STT)) : previewData
-            const fields = ['Container No', 'Hãng tàu', 'Size', 'Phân Loại', 'Ghi chú']
+            const fields = ['Container No', 'Hãng tàu', 'Size', 'Ngày tạo', 'Phân Loại', 'Ghi chú']
             const tsv = rows.map(r => fields.map(h => String(r[h] ?? '')).join('\t')).join('\n')
             navigator.clipboard.writeText(tsv)
             message.success(`Đã copy ${rows.length} dòng`)
@@ -864,10 +989,10 @@ function ContainerManagement() {
             { title: 'Container No', dataIndex: 'Container No', key: 'Container No' },
             { title: 'Hãng tàu', dataIndex: 'Hãng tàu', key: 'Hãng tàu' },
             { title: 'Size', dataIndex: 'Size', key: 'Size' },
+            { title: 'Ngày tạo', dataIndex: 'Ngày tạo', key: 'Ngày tạo', width: 100 },
             { title: 'Phân Loại', dataIndex: 'Phân Loại', key: 'Phân Loại', width: 120 },
             { title: 'Ghi chú', dataIndex: 'Ghi chú', key: 'Ghi chú', width: 150, ellipsis: true },
             { title: 'Bay', dataIndex: 'Bay', key: 'Bay', width: 80 },
-            { title: 'Ngày tạo', dataIndex: 'Ngày tạo', key: 'Ngày tạo', width: 100 },
           ]}
           dataSource={previewData}
           rowKey="STT"
@@ -879,6 +1004,25 @@ function ContainerManagement() {
             style: { backgroundColor: previewRowColors[record.STT - 1] },
           })}
         />
+      </Modal>
+
+      <Modal
+        title={imgPreviewTitle}
+        open={imgPreviewOpen}
+        onCancel={handleCloseImgPreview}
+        footer={null}
+        width={800}
+      >
+        <Spin spinning={imgPreviewLoading}>
+          <Image.PreviewGroup>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 100 }}>
+              {imgPreviewList.map((url, i) => (
+                <Image key={i} src={url} alt={`img-${i}`} width={150} height={150} style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }} />
+              ))}
+              {!imgPreviewLoading && imgPreviewList.length === 0 && <p>Không có hình ảnh</p>}
+            </div>
+          </Image.PreviewGroup>
+        </Spin>
       </Modal>
     </div>
   )
