@@ -42,6 +42,16 @@ function ContainerManagement() {
   const [frequencies, setFrequencies] = useState({})
   const [locationHistory, setLocationHistory] = useState({})
   const [locationOptions, setLocationOptions] = useState([])
+  const [locationList, setLocationList] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('locationList') || '[]') } catch { return [] }
+  })
+  const [remarkList, setRemarkList] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('remarkList') || '[]') } catch { return [] }
+  })
+  const [locationListOpen, setLocationListOpen] = useState(false)
+  const [remarkListOpen, setRemarkListOpen] = useState(false)
+  const [editingListItem, setEditingListItem] = useState(null)
+  const [listInputValue, setListInputValue] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewData, setPreviewData] = useState([])
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -63,6 +73,14 @@ function ContainerManagement() {
   useEffect(() => {
     localStorage.setItem('containerRef', JSON.stringify(referenceData))
   }, [referenceData])
+
+  useEffect(() => {
+    localStorage.setItem('locationList', JSON.stringify(locationList))
+  }, [locationList])
+
+  useEffect(() => {
+    localStorage.setItem('remarkList', JSON.stringify(remarkList))
+  }, [remarkList])
 
   useEffect(() => {
     return () => {
@@ -392,43 +410,55 @@ function ContainerManagement() {
   const fetchSuggestions = async (containerNo) => {
     try {
       if (suggestionQueryRef.current !== containerNo) return
-      const [contRes, lockRes] = await Promise.all([
-        api.get(`/containers/by-number/${containerNo}`),
-        api.get(`/locks/container-data/${containerNo}`),
-      ])
+      const lockRes = await api.get(`/locks/container-data/${containerNo}`)
       if (suggestionQueryRef.current !== containerNo) return
-      const all = [
-        ...contRes.data.map(c => ({
-          containerNo: c.containerNo,
-          shippingLine: c.shippingLine,
-          size: c.size,
-          location: c.location || '',
-          bay: c.bay || '',
-          remark: c.remark || '',
-        })),
-        ...lockRes.data,
-      ]
-      if (!all.length) return
-      const groupBy = {}
-      all.forEach(item => {
-        const key = item.containerNo
-        if (!groupBy[key]) {
-          groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+      if (lockRes.data && lockRes.data.length > 0) {
+        const groupBy = {}
+        lockRes.data.forEach(item => {
+          const key = item.containerNo
+          if (!groupBy[key]) {
+            groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+          }
+          if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
+          if (item.size) groupBy[key].size = item.size
+          if (item.bay) groupBy[key].bay = item.bay
+          if (item.location) groupBy[key].locations.add(item.location)
+        })
+        const groups = Object.values(groupBy)
+        setAddContainerOptions(groups.map(g => ({
+          value: g.containerNo,
+          label: g.containerNo,
+          data: g,
+        })))
+        if (groups.length === 1) {
+          fillFieldsFromGroup(groups[0])
         }
-        if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
-        if (item.size) groupBy[key].size = item.size
-        if (item.bay) groupBy[key].bay = item.bay
-        if (item.location) groupBy[key].locations.add(item.location)
-      })
-      const groups = Object.values(groupBy)
-      setAddContainerOptions(groups.map(g => ({
-        value: g.containerNo,
-        label: g.containerNo,
-        data: g,
-      })))
-      if (groups.length === 1) {
-        fillFieldsFromGroup(groups[0])
+        return
       }
+      const refMatches = referenceData.filter(r => r.containerNo.startsWith(containerNo))
+      if (refMatches.length > 0) {
+        const groupBy = {}
+        refMatches.forEach(item => {
+          const key = item.containerNo
+          if (!groupBy[key]) {
+            groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+          }
+          if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
+          if (item.size) groupBy[key].size = item.size
+          if (item.bay) groupBy[key].bay = item.bay
+        })
+        const groups = Object.values(groupBy)
+        setAddContainerOptions(groups.map(g => ({
+          value: g.containerNo,
+          label: g.containerNo,
+          data: g,
+        })))
+        if (groups.length === 1) {
+          fillFieldsFromGroup(groups[0])
+        }
+        return
+      }
+      setAddContainerOptions([])
     } catch {}
   }
 
@@ -714,7 +744,7 @@ function ContainerManagement() {
         </Row>
         <Divider className="my-3" />
         <Row gutter={[8, 8]} align="middle">
-          <Col xs={24} sm={8} md={4}>
+          <Col xs={24} sm={8} md={3}>
             <AutoComplete
               ref={addNoRef}
               value={addContainerNo}
@@ -726,7 +756,7 @@ function ContainerManagement() {
               onKeyDown={e => e.key === 'Enter' && handleAdd()}
             />
           </Col>
-          <Col xs={12} sm={8} md={3}>
+          <Col xs={12} sm={8} md={2}>
             <Select placeholder="Hãng tàu" className="w-full" value={addShippingLine || undefined} onChange={setAddShippingLine}>
               <Option value="">-- Chọn --</Option>
               <Option value="MSC">MSC</Option>
@@ -742,34 +772,44 @@ function ContainerManagement() {
               <Option value="Other">Other</Option>
             </Select>
           </Col>
-          <Col xs={8} sm={6} md={2}>
+          <Col xs={8} sm={6} md={1}>
             <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
           </Col>
           <Col xs={12} sm={8} md={2}>
-            <AutoComplete placeholder="Phân Loại" value={addLocation} options={locationOptions.map(o => ({ value: o }))} onChange={setAddLocation} onSelect={v => setAddLocation(v)} />
+            <div style={{ display: 'flex' }}>
+              <AutoComplete placeholder="Phân Loại" value={addLocation} options={[...new Set([...locationList, ...locationOptions, ...(addLocation ? [addLocation] : [])])].map(o => ({ value: o }))} onChange={setAddLocation} onSelect={v => setAddLocation(v)} style={{ flex: 1 }} filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())} />
+              <Tooltip title="DS Phân Loại"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => setLocationListOpen(true)} style={{ border: '1px solid #d9d9d9', borderLeft: 'none', borderRadius: '0 6px 6px 0', height: 32, flexShrink: 0 }} /></Tooltip>
+            </div>
           </Col>
-          <Col xs={12} sm={8} md={3}>
-            <Input placeholder="Ghi chú" value={addRemark} onChange={e => setAddRemark(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+          <Col xs={12} sm={7} md={3}>
+            <div style={{ display: 'flex' }}>
+              <AutoComplete placeholder="Ghi chú" value={addRemark} options={[...new Set([...remarkList, ...(addRemark ? [addRemark] : [])])].map(o => ({ value: o }))} onChange={v => setAddRemark(v.toUpperCase())} onSelect={v => setAddRemark(v.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} style={{ flex: 1 }} filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())} />
+              <Tooltip title="DS Ghi chú"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => setRemarkListOpen(true)} style={{ border: '1px solid #d9d9d9', borderLeft: 'none', borderRadius: '0 6px 6px 0', height: 32, flexShrink: 0 }} /></Tooltip>
+            </div>
           </Col>
-          <Col xs={8} sm={6} md={2}>
+          <Col xs={8} sm={6} md={1}>
             <Input placeholder="Bay" value={addBay} onChange={e => setAddBay(e.target.value.toUpperCase())} />
           </Col>
-          <Col xs={12} sm={8} md={3}>
+          <Col>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Thêm</Button>
+          </Col>
+        </Row>
+        <Row gutter={[8, 8]} align="middle" style={{ marginTop: 8 }}>
+          <Col xs={12} sm={8} md={5}>
             <Input placeholder="Folder Hình In" value={addFolderIn} readOnly
               addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderIn} />}
             />
           </Col>
-          <Col xs={12} sm={8} md={3}>
+          <Col xs={12} sm={8} md={5}>
             <Input placeholder="Folder Hình SC" value={addFolderSC} readOnly
               addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderSC} />}
             />
           </Col>
-          <Col xs={12} sm={8} md={1}>
-            {addHinhIn && <Tag color="green">In</Tag>}
-            {addHinhSC && <Tag color="blue">SC</Tag>}
-          </Col>
-          <Col>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Thêm</Button>
+          <Col xs={12} sm={8} md={2}>
+            <Space>
+              {addHinhIn && <Tag color="green">In</Tag>}
+              {addHinhSC && <Tag color="blue">SC</Tag>}
+            </Space>
           </Col>
         </Row>
       </Card>
@@ -1023,6 +1063,58 @@ function ContainerManagement() {
             </div>
           </Image.PreviewGroup>
         </Spin>
+      </Modal>
+
+      <Modal title="Danh sách Phân Loại" open={locationListOpen} onCancel={() => setLocationListOpen(false)} footer={null} width={400}>
+        <Space direction="vertical" className="w-full">
+          <Row gutter={8}>
+            <Col flex="auto">
+              <Input placeholder="Thêm phân loại..." value={editingListItem?.type === 'location' ? editingListItem.value : ''} onChange={e => setEditingListItem({ type: 'location', value: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { if (editingListItem?.value?.trim()) { setLocationList(p => [...new Set([...p, editingListItem.value.trim()])]); setEditingListItem(null) } } }} />
+            </Col>
+            <Col>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (editingListItem?.value?.trim()) { setLocationList(p => [...new Set([...p, editingListItem.value.trim()])]); setEditingListItem(null) } }} />
+            </Col>
+          </Row>
+          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+            {locationList.map(item => (
+              <Row key={item} gutter={8} align="middle" style={{ marginBottom: 4 }}>
+                <Col flex="auto"><span>{item}</span></Col>
+                <Col>
+                  <Popconfirm title="Xóa?" onConfirm={() => setLocationList(p => p.filter(x => x !== item))} okText="Xóa" cancelText="Hủy">
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Col>
+              </Row>
+            ))}
+            {locationList.length === 0 && <p className="text-gray-400 text-center">Chưa có dữ liệu</p>}
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal title="Danh sách Ghi chú" open={remarkListOpen} onCancel={() => setRemarkListOpen(false)} footer={null} width={400}>
+        <Space direction="vertical" className="w-full">
+          <Row gutter={8}>
+            <Col flex="auto">
+              <Input placeholder="Thêm ghi chú..." value={editingListItem?.type === 'remark' ? editingListItem.value : ''} onChange={e => setEditingListItem({ type: 'remark', value: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { if (editingListItem?.value?.trim()) { setRemarkList(p => [...new Set([...p, editingListItem.value.trim()])]); setEditingListItem(null) } } }} />
+            </Col>
+            <Col>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (editingListItem?.value?.trim()) { setRemarkList(p => [...new Set([...p, editingListItem.value.trim()])]); setEditingListItem(null) } }} />
+            </Col>
+          </Row>
+          <div style={{ maxHeight: 300, overflow: 'auto' }}>
+            {remarkList.map(item => (
+              <Row key={item} gutter={8} align="middle" style={{ marginBottom: 4 }}>
+                <Col flex="auto"><span>{item}</span></Col>
+                <Col>
+                  <Popconfirm title="Xóa?" onConfirm={() => setRemarkList(p => p.filter(x => x !== item))} okText="Xóa" cancelText="Hủy">
+                    <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                  </Popconfirm>
+                </Col>
+              </Row>
+            ))}
+            {remarkList.length === 0 && <p className="text-gray-400 text-center">Chưa có dữ liệu</p>}
+          </div>
+        </Space>
       </Modal>
     </div>
   )
