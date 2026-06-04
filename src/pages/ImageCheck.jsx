@@ -1,6 +1,8 @@
 import { useState, useRef } from 'react'
-import { Card, Input, Row, Col, Tag, Table, Button, message } from 'antd'
-import { FolderOpenOutlined, SearchOutlined } from '@ant-design/icons'
+import { Card, Input, Row, Col, Tag, Table, Button, message, Image, Modal, Spin } from 'antd'
+import { FolderOpenOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons'
+
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
 function ImageCheck() {
   const [folderIn, setFolderIn] = useState('')
@@ -9,6 +11,10 @@ function ImageCheck() {
   const [hinhIn, setHinhIn] = useState(null)
   const [hinhSC, setHinhSC] = useState(null)
   const [history, setHistory] = useState([])
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewList, setPreviewList] = useState([])
+  const [previewTitle, setPreviewTitle] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
   const folderInRef = useRef(null)
   const folderSCRefs = useRef([])
 
@@ -20,6 +26,51 @@ function ImageCheck() {
       }
     } catch {}
     return false
+  }
+
+  const readImagesFromFolder = async (handles, containerNo) => {
+    const urls = []
+    for (const handle of handles) {
+      try {
+        for await (const entry of handle.values()) {
+          if (entry.kind === 'directory' && entry.name.includes(containerNo)) {
+            for await (const fileEntry of entry.values()) {
+              if (fileEntry.kind === 'file') {
+                const name = fileEntry.name.toLowerCase()
+                if (IMAGE_EXTS.some(ext => name.endsWith(ext))) {
+                  const file = await fileEntry.getFile()
+                  urls.push(URL.createObjectURL(file))
+                }
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+    return urls
+  }
+
+  const handleOpenImages = async (type) => {
+    const label = type === 'in' ? 'Hình In' : 'Hình SC'
+    const handles = type === 'in'
+      ? (folderInRef.current ? [folderInRef.current] : [])
+      : folderSCRefs.current
+    if (!handles.length) {
+      message.warning(`Chưa chọn folder ${label.toLowerCase()}`)
+      return
+    }
+    setPreviewTitle(`${containerNo} - ${label}`)
+    setPreviewLoading(true)
+    setPreviewOpen(true)
+    const urls = await readImagesFromFolder(handles, containerNo)
+    setPreviewList(urls)
+    setPreviewLoading(false)
+  }
+
+  const handleCloseImgPreview = () => {
+    setPreviewOpen(false)
+    previewList.forEach(url => URL.revokeObjectURL(url))
+    setPreviewList([])
   }
 
   const autoCheck = async (no) => {
@@ -74,10 +125,14 @@ function ImageCheck() {
   const columns = [
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 180 },
     { title: 'Hình In', dataIndex: 'hinhIn', key: 'hinhIn', width: 100, align: 'center',
-      render: (v) => v === null ? <Tag>---</Tag> : v ? <Tag color="green">Có</Tag> : <Tag color="red">Không</Tag>,
+      render: (v, r) => v === null ? <Tag>---</Tag> : v
+        ? <Tag color="green" className="cursor-pointer" onClick={() => handleOpenImages('in')}><EyeOutlined className="mr-1" />Có</Tag>
+        : <Tag color="red">Không</Tag>,
     },
     { title: 'Hình SC', dataIndex: 'hinhSC', key: 'hinhSC', width: 100, align: 'center',
-      render: (v) => v === null ? <Tag>---</Tag> : v ? <Tag color="green">Có</Tag> : <Tag color="red">Không</Tag>,
+      render: (v, r) => v === null ? <Tag>---</Tag> : v
+        ? <Tag color="green" className="cursor-pointer" onClick={() => handleOpenImages('sc')}><EyeOutlined className="mr-1" />Có</Tag>
+        : <Tag color="red">Không</Tag>,
     },
     { title: 'Thời gian', dataIndex: 'checkedAt', key: 'checkedAt', width: 180,
       render: (v) => new Date(v).toLocaleString('vi-VN'),
@@ -106,12 +161,16 @@ function ImageCheck() {
           <Col>
             {hinhIn !== null && (
               <span className="mr-3">
-                Hình In: {hinhIn ? <Tag color="green">Có</Tag> : <Tag color="red">Không</Tag>}
+                Hình In: {hinhIn
+                  ? <Tag color="green" className="cursor-pointer" onClick={() => handleOpenImages('in')}><EyeOutlined className="mr-1" />Có</Tag>
+                  : <Tag color="red">Không</Tag>}
               </span>
             )}
             {hinhSC !== null && (
               <span>
-                Hình SC: {hinhSC ? <Tag color="green">Có</Tag> : <Tag color="red">Không</Tag>}
+                Hình SC: {hinhSC
+                  ? <Tag color="green" className="cursor-pointer" onClick={() => handleOpenImages('sc')}><EyeOutlined className="mr-1" />Có</Tag>
+                  : <Tag color="red">Không</Tag>}
               </span>
             )}
           </Col>
@@ -120,6 +179,25 @@ function ImageCheck() {
       <Card title="Lịch sử kiểm tra">
         <Table columns={columns} dataSource={history} rowKey="checkedAt" pagination={{ pageSize: 20 }} size="small" />
       </Card>
+
+      <Modal
+        title={previewTitle}
+        open={previewOpen}
+        onCancel={handleCloseImgPreview}
+        footer={null}
+        width={800}
+      >
+        <Spin spinning={previewLoading}>
+          <Image.PreviewGroup>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, minHeight: 100 }}>
+              {previewList.map((url, i) => (
+                <Image key={i} src={url} alt={`img-${i}`} width={150} height={150} style={{ objectFit: 'cover', borderRadius: 4, border: '1px solid #d9d9d9' }} />
+              ))}
+              {!previewLoading && previewList.length === 0 && <p>Không có hình ảnh</p>}
+            </div>
+          </Image.PreviewGroup>
+        </Spin>
+      </Modal>
     </div>
   )
 }
