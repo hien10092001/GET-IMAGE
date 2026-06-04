@@ -94,8 +94,11 @@ function ImageCheck() {
 
   const handleNoChange = (val) => {
     setContainerNo(val)
-    if (val) autoCheck(val)
-    else { setHinhIn(null); setHinhSC(null) }
+    if (!val) { setHinhIn(null); setHinhSC(null) }
+  }
+
+  const handleSearch = () => {
+    if (containerNo) autoCheck(containerNo)
   }
 
     const handlePickFolder = async (setter, ref) => {
@@ -156,7 +159,7 @@ function ImageCheck() {
         </Row>
         <Row gutter={[12, 12]} align="middle" className="mt-3">
           <Col xs={24} sm={12} md={6}>
-            <Input prefix={<SearchOutlined />} placeholder="Nhập Container No..." value={containerNo} onChange={e => handleNoChange(e.target.value.toUpperCase())} />
+            <Input prefix={<SearchOutlined />} placeholder="Nhập Container No..." value={containerNo} onChange={e => handleNoChange(e.target.value.toUpperCase())} onPressEnter={handleSearch} />
           </Col>
           <Col>
             {hinhIn !== null && (
