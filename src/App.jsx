@@ -2,13 +2,9 @@ import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
 import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined } from '@ant-design/icons'
-import TodoList from './TodoList'
-import Login from './pages/Login'
+import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
-const Dashboard = lazy(() => import('./pages/Dashboard'))
-const ContainerManagement = lazy(() => import('./pages/ContainerManagement'))
-const LockProduction = lazy(() => import('./pages/LockProduction'))
 const ImageCheck = lazy(() => import('./pages/ImageCheck'))
 
 const { Dragger } = Upload
@@ -124,18 +120,14 @@ function App() {
           {activeTab === 'dedup' && <ExcelDeduplicator />}
           {activeTab === 'compress' && <ImageCompressor />}
           {activeTab === 'rename' && <RenameSubdirs />}
-          {activeTab === 'todo' && <TodoList />}
-          {(activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && !user && (
-            <div className="flex items-center justify-center min-h-[calc(100vh-120px)]">
-              <Login onLogin={handleLogin} />
-            </div>
+          {(activeTab === 'todo' || activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
+            <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
           )}
-          <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
-            {activeTab === 'dashboard' && user && <Dashboard />}
-            {activeTab === 'containers' && user && <ContainerManagement />}
-            {activeTab === 'sanluong' && user && <LockProduction />}
-            {activeTab === 'imagecheck' && <ImageCheck />}
-          </Suspense>
+          {activeTab === 'imagecheck' && (
+            <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+              <ImageCheck />
+            </Suspense>
+          )}
         </Content>
       </Layout>
     </ConfigProvider>

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, AutoComplete, Spin, Image } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, UploadOutlined, LockOutlined, CopyOutlined, FolderOpenOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, UploadOutlined, LockOutlined, CopyOutlined, FolderOpenOutlined, FilterOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
+const ensureBayPrefix = v => { const s = (v || '').toUpperCase().trim(); return s ? (s.startsWith('BAY ') ? s : 'BAY ' + s) : s }
 import api from '../services/api'
 
 const { Option } = Select
@@ -16,7 +17,8 @@ function ContainerManagement() {
   const [search, setSearch] = useState('')
   const [searchText, setSearchText] = useState('')
   const searchTimerRef = useRef(null)
-  const [filters, setFilters] = useState({ shippingLine: '', size: '' })
+  const [filters, setFilters] = useState({ shippingLine: '', size: '', location: '', remark: '', locked: '' })
+  const [dateRange, setDateRange] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [submitting, setSubmitting] = useState(false)
@@ -42,6 +44,7 @@ function ContainerManagement() {
   const [frequencies, setFrequencies] = useState({})
   const [locationHistory, setLocationHistory] = useState({})
   const [locationOptions, setLocationOptions] = useState([])
+  const [modalLocationOptions, setModalLocationOptions] = useState([])
   const [locationList, setLocationList] = useState(() => {
     try { return JSON.parse(localStorage.getItem('locationList') || '[]') } catch { return [] }
   })
@@ -64,6 +67,8 @@ function ContainerManagement() {
   const [addContainerOptions, setAddContainerOptions] = useState([])
   const suggestionTimerRef = useRef(null)
   const suggestionQueryRef = useRef('')
+  const modalSuggestionTimerRef = useRef(null)
+  const modalSuggestionQueryRef = useRef('')
   const [form] = Form.useForm()
   const searchRef = useRef(null)
   const addNoRef = useRef(null)
@@ -86,6 +91,7 @@ function ContainerManagement() {
     return () => {
       clearTimeout(searchTimerRef.current)
       clearTimeout(suggestionTimerRef.current)
+      clearTimeout(modalSuggestionTimerRef.current)
     }
   }, [])
 
@@ -95,6 +101,13 @@ function ContainerManagement() {
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
+    if (filters.location) params.location = filters.location
+    if (filters.remark) params.remark = filters.remark
+    if (filters.locked) params.locked = filters.locked
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      params.dateFrom = dateRange[0].format('YYYY-MM-DD')
+      params.dateTo = dateRange[1].format('YYYY-MM-DD')
+    }
     api.get('/containers', { params }).then((res) => {
       setData(res.data.data)
       setTotal(res.data.total)
@@ -373,13 +386,41 @@ function ContainerManagement() {
     return false
   }
 
+  const fetchLocationSources = async (containerNo) => {
+    const locations = new Set()
+    try {
+      const results = await Promise.allSettled([
+        api.get(`/locks/container-data/${containerNo}`),
+        api.get(`/containers/by-number/${containerNo}`),
+      ])
+      results[0].status === 'fulfilled' && results[0].value.data?.forEach(item => { if (item.location) locations.add(item.location) })
+      results[1].status === 'fulfilled' && results[1].value.data?.forEach(item => { if (item.location) locations.add(item.location) })
+    } catch {}
+    return [...locations]
+  }
+
   const handleContainerNoChange = (e) => {
     const val = e.target.value.toUpperCase().trim()
     const match = referenceData.find(r => r.containerNo === val)
     if (match) {
       if (match.shippingLine) form.setFieldValue('shippingLine', match.shippingLine)
       if (match.size) form.setFieldValue('size', match.size)
-      if (match.bay) form.setFieldValue('bay', match.bay)
+      if (match.bay) form.setFieldValue('bay', ensureBayPrefix(match.bay))
+    }
+    clearTimeout(modalSuggestionTimerRef.current)
+    if (val.length >= 3) {
+      modalSuggestionQueryRef.current = val
+      modalSuggestionTimerRef.current = setTimeout(async () => {
+        const q = modalSuggestionQueryRef.current
+        const locs = await fetchLocationSources(val)
+        if (modalSuggestionQueryRef.current !== q) return
+        setModalLocationOptions(locs)
+        if (locs.length === 1) {
+          form.setFieldValue('location', locs[0])
+        } else if (locs.length > 1) {
+          form.setFieldValue('location', '')
+        }
+      }, 200)
     }
   }
 
@@ -410,9 +451,15 @@ function ContainerManagement() {
   const fetchSuggestions = async (containerNo) => {
     try {
       if (suggestionQueryRef.current !== containerNo) return
-      const lockRes = await api.get(`/locks/container-data/${containerNo}`)
+      const results = await Promise.allSettled([
+        api.get(`/locks/container-data/${containerNo}`),
+        api.get(`/containers/by-number/${containerNo}`),
+      ])
+      const lockRes = results[0].status === 'fulfilled' ? results[0].value : null
+      const containerRes = results[1].status === 'fulfilled' ? results[1].value : null
       if (suggestionQueryRef.current !== containerNo) return
-      if (lockRes.data && lockRes.data.length > 0) {
+      const allLocations = new Set()
+      if (lockRes?.data?.length > 0) {
         const groupBy = {}
         lockRes.data.forEach(item => {
           const key = item.containerNo
@@ -422,30 +469,10 @@ function ContainerManagement() {
           if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
           if (item.size) groupBy[key].size = item.size
           if (item.bay) groupBy[key].bay = item.bay
-          if (item.location) groupBy[key].locations.add(item.location)
-        })
-        const groups = Object.values(groupBy)
-        setAddContainerOptions(groups.map(g => ({
-          value: g.containerNo,
-          label: g.containerNo,
-          data: g,
-        })))
-        if (groups.length === 1) {
-          fillFieldsFromGroup(groups[0])
-        }
-        return
-      }
-      const refMatches = referenceData.filter(r => r.containerNo.startsWith(containerNo))
-      if (refMatches.length > 0) {
-        const groupBy = {}
-        refMatches.forEach(item => {
-          const key = item.containerNo
-          if (!groupBy[key]) {
-            groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+          if (item.location) {
+            groupBy[key].locations.add(item.location)
+            allLocations.add(item.location)
           }
-          if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
-          if (item.size) groupBy[key].size = item.size
-          if (item.bay) groupBy[key].bay = item.bay
         })
         const groups = Object.values(groupBy)
         setAddContainerOptions(groups.map(g => ({
@@ -456,16 +483,49 @@ function ContainerManagement() {
         if (groups.length === 1) {
           fillFieldsFromGroup(groups[0])
         }
-        return
       }
-      setAddContainerOptions([])
+      containerRes?.data?.forEach(item => {
+        if (item.location) allLocations.add(item.location)
+      })
+      if (allLocations.size > 0) {
+        setLocationOptions(prev => {
+          const merged = new Set([...prev, ...allLocations])
+          return [...merged]
+        })
+      }
+      if (!lockRes || !lockRes.data || lockRes.data.length === 0) {
+        const refMatches = referenceData.filter(r => r.containerNo.startsWith(containerNo))
+        if (refMatches.length > 0) {
+          const groupBy = {}
+          refMatches.forEach(item => {
+            const key = item.containerNo
+            if (!groupBy[key]) {
+              groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+            }
+            if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
+            if (item.size) groupBy[key].size = item.size
+            if (item.bay) groupBy[key].bay = item.bay
+          })
+          const groups = Object.values(groupBy)
+          setAddContainerOptions(groups.map(g => ({
+            value: g.containerNo,
+            label: g.containerNo,
+            data: g,
+          })))
+          if (groups.length === 1) {
+            fillFieldsFromGroup(groups[0])
+          }
+          return
+        }
+        setAddContainerOptions([])
+      }
     } catch {}
   }
 
   const fillFieldsFromGroup = (g) => {
     setAddShippingLine(g.shippingLine)
     setAddSize(g.size)
-    setAddBay(g.bay)
+    setAddBay(ensureBayPrefix(g.bay))
     const locs = [...g.locations].filter(Boolean)
     if (locs.length === 1) {
       setAddLocation(locs[0])
@@ -487,6 +547,13 @@ function ContainerManagement() {
       if (search) params.search = search
       if (filters.shippingLine) params.shippingLine = filters.shippingLine
       if (filters.size) params.size = filters.size
+      if (filters.location) params.location = filters.location
+      if (filters.remark) params.remark = filters.remark
+      if (filters.locked) params.locked = filters.locked
+      if (dateRange && dateRange[0] && dateRange[1]) {
+        params.dateFrom = dateRange[0].format('YYYY-MM-DD')
+        params.dateTo = dateRange[1].format('YYYY-MM-DD')
+      }
       const res = await api.get('/containers/all', { params })
       const data = res.data.map((c, i) => ({
         STT: i + 1,
@@ -534,6 +601,9 @@ function ContainerManagement() {
       if (search) params.search = search
       if (filters.shippingLine) params.shippingLine = filters.shippingLine
       if (filters.size) params.size = filters.size
+      if (filters.location) params.location = filters.location
+      if (filters.remark) params.remark = filters.remark
+      if (filters.locked) params.locked = filters.locked
       params.limit = total
       const res = await api.get('/containers', { params })
       const items = res.data.data.map(c => ({
@@ -603,56 +673,8 @@ function ContainerManagement() {
     <div>
       <Card className="mb-4">
         <Row gutter={[8, 8]} align="middle">
-          <Col xs={24} md={6}>
-            <Input
-              ref={searchRef}
-              placeholder="Tìm kiếm container..."
-              prefix={<SearchOutlined />}
-              value={searchText}
-              onChange={(e) => {
-                const val = e.target.value
-                setSearchText(val)
-                clearTimeout(searchTimerRef.current)
-                searchTimerRef.current = setTimeout(() => {
-                  setSearch(val)
-                  setPage(1)
-                }, 300)
-              }}
-              allowClear
-              onClear={() => {
-                setSearchText('')
-                setSearch('')
-                setPage(1)
-              }}
-            />
-          </Col>
           <Col xs={12} md={2}>
-            <Select placeholder="Hãng tàu" allowClear className="w-full" value={filters.shippingLine || undefined} onChange={(v) => setFilters(p => ({ ...p, shippingLine: v || '' }))}>
-              <Option value="MSC">MSC</Option>
-              <Option value="MAERSK">MAERSK</Option>
-              <Option value="CMA CGM">CMA CGM</Option>
-              <Option value="COSCO">COSCO</Option>
-              <Option value="HAPAG-LLOYD">HAPAG-LLOYD</Option>
-              <Option value="ONE">ONE</Option>
-              <Option value="EVERGREEN">EVERGREEN</Option>
-              <Option value="YANG MING">YANG MING</Option>
-              <Option value="ZIM">ZIM</Option>
-              <Option value="WAN HAI">WAN HAI</Option>
-              <Option value="Other">Other</Option>
-            </Select>
-          </Col>
-          <Col xs={12} md={2}>
-            <Select placeholder="Size" allowClear className="w-full" value={filters.size || undefined} onChange={(v) => setFilters(p => ({ ...p, size: v || '' }))}>
-              <Option value="20GP">20GP</Option>
-              <Option value="40GP">40GP</Option>
-              <Option value="40HC">40HC</Option>
-              <Option value="45HC">45HC</Option>
-              <Option value="20RF">20RF</Option>
-              <Option value="40RF">40RF</Option>
-            </Select>
-          </Col>
-          <Col xs={12} md={2}>
-            <Button type="primary" icon={<ExportOutlined />} style={{ background: '#1890ff', borderColor: '#1890ff' }} onClick={exportExcel} block>Excel</Button>
+            <Button type="primary" icon={<ExportOutlined />} style={{ background: '#1890ff', borderColor: '#1890ff' }} onClick={exportExcel} block>Xem Excel</Button>
           </Col>
           <Col xs={12} md={2}>
             <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={importExcel} className="w-full">
@@ -696,7 +718,7 @@ function ContainerManagement() {
                     shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
                     size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
                     location: li >= 0 && r[li] ? String(r[li]).trim() : '',
-                    bay: bi >= 0 && r[bi] ? String(r[bi]).toUpperCase().trim() : '',
+                    bay: bi >= 0 && r[bi] ? ensureBayPrefix(String(r[bi])) : '',
                     remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
                     createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
                   })).filter(i => i.containerNo && i.shippingLine && i.size)
@@ -744,6 +766,77 @@ function ContainerManagement() {
         </Row>
         <Divider className="my-3" />
         <Row gutter={[8, 8]} align="middle">
+          <Col xs={24} md={6}>
+            <Input
+              ref={searchRef}
+              placeholder="Tìm kiếm container..."
+              prefix={<SearchOutlined />}
+              value={searchText}
+              onChange={(e) => {
+                const val = e.target.value
+                setSearchText(val)
+                clearTimeout(searchTimerRef.current)
+                searchTimerRef.current = setTimeout(() => {
+                  setSearch(val)
+                  setPage(1)
+                }, 300)
+              }}
+              allowClear
+              onClear={() => {
+                setSearchText('')
+                setSearch('')
+                setPage(1)
+              }}
+            />
+          </Col>
+          <Col xs={24} md={5}>
+            <DatePicker.RangePicker
+              value={dateRange}
+              onChange={(dates) => { setDateRange(dates); setPage(1) }}
+              format="DD/MM/YYYY"
+              placeholder={['Từ ngày', 'Đến ngày']}
+              style={{ width: '100%' }}
+            />
+          </Col>
+          <Col xs={12} md={3}>
+            <AutoComplete
+              placeholder="Phân Loại"
+              value={filters.location}
+              options={[...new Set([...locationList, ...(filters.location ? [filters.location] : [])])].map(o => ({ value: o }))}
+              onChange={(v) => { setFilters(p => ({ ...p, location: v })); setPage(1) }}
+              style={{ width: '100%' }}
+              filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+              allowClear
+              onClear={() => { setFilters(p => ({ ...p, location: '' })); setPage(1) }}
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <AutoComplete
+              placeholder="Ghi chú"
+              value={filters.remark}
+              options={[...new Set([...remarkList, ...(filters.remark ? [filters.remark] : [])])].map(o => ({ value: o }))}
+              onChange={(v) => { setFilters(p => ({ ...p, remark: v ? v.toUpperCase() : '' })); setPage(1) }}
+              style={{ width: '100%' }}
+              filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+              allowClear
+              onClear={() => { setFilters(p => ({ ...p, remark: '' })); setPage(1) }}
+            />
+          </Col>
+          <Col xs={12} md={2}>
+            <Select
+              placeholder="Đã chốt"
+              allowClear
+              className="w-full"
+              value={filters.locked || undefined}
+              onChange={(v) => { setFilters(p => ({ ...p, locked: v || '' })); setPage(1) }}
+            >
+              <Option value="true">Đã chốt</Option>
+              <Option value="false">Chưa chốt</Option>
+            </Select>
+          </Col>
+        </Row>
+        <Divider className="my-3" />
+        <Row gutter={[8, 8]} align="middle">
           <Col xs={24} sm={8} md={3}>
             <AutoComplete
               ref={addNoRef}
@@ -757,20 +850,22 @@ function ContainerManagement() {
             />
           </Col>
           <Col xs={12} sm={8} md={2}>
-            <Select placeholder="Hãng tàu" className="w-full" value={addShippingLine || undefined} onChange={setAddShippingLine}>
-              <Option value="">-- Chọn --</Option>
-              <Option value="MSC">MSC</Option>
-              <Option value="MAERSK">MAERSK</Option>
-              <Option value="CMA CGM">CMA CGM</Option>
-              <Option value="COSCO">COSCO</Option>
-              <Option value="HAPAG-LLOYD">HAPAG-LLOYD</Option>
-              <Option value="ONE">ONE</Option>
-              <Option value="EVERGREEN">EVERGREEN</Option>
-              <Option value="YANG MING">YANG MING</Option>
-              <Option value="ZIM">ZIM</Option>
-              <Option value="WAN HAI">WAN HAI</Option>
-              <Option value="Other">Other</Option>
-            </Select>
+            <AutoComplete placeholder="Hãng tàu" className="w-full" value={addShippingLine || undefined} onChange={setAddShippingLine}
+              options={[
+                { value: 'MSC' },
+                { value: 'MAERSK' },
+                { value: 'CMA' },
+                { value: 'COSCO' },
+                { value: 'HAPAG-LLOYD' },
+                { value: 'ONE' },
+                { value: 'EVERGREEN' },
+                { value: 'YANG MING' },
+                { value: 'ZIM' },
+                { value: 'WHL' },
+                { value: 'SIT' },
+              ]}
+              filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+            />
           </Col>
           <Col xs={8} sm={6} md={1}>
             <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
@@ -783,12 +878,12 @@ function ContainerManagement() {
           </Col>
           <Col xs={12} sm={7} md={3}>
             <div style={{ display: 'flex' }}>
-              <AutoComplete placeholder="Ghi chú" value={addRemark} options={[...new Set([...remarkList, ...(addRemark ? [addRemark] : [])])].map(o => ({ value: o }))} onChange={v => setAddRemark(v.toUpperCase())} onSelect={v => setAddRemark(v.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} style={{ flex: 1 }} filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())} />
+              <AutoComplete placeholder="Ghi chú" value={addRemark} options={[...new Set([...remarkList, ...(addRemark ? [addRemark] : [])])].map(o => ({ value: o }))} onChange={v => setAddRemark(v ? v.toUpperCase() : '')} onSelect={v => setAddRemark(v ? v.toUpperCase() : '')} onKeyDown={e => e.key === 'Enter' && handleAdd()} style={{ flex: 1 }} filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())} />
               <Tooltip title="DS Ghi chú"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => setRemarkListOpen(true)} style={{ border: '1px solid #d9d9d9', borderLeft: 'none', borderRadius: '0 6px 6px 0', height: 32, flexShrink: 0 }} /></Tooltip>
             </div>
           </Col>
           <Col xs={8} sm={6} md={1}>
-            <Input placeholder="Bay" value={addBay} onChange={e => setAddBay(e.target.value.toUpperCase())} />
+            <Input placeholder="Bay" value={addBay} onChange={e => setAddBay(e.target.value.toUpperCase())} onBlur={e => { const v = e.target.value.toUpperCase().trim(); if (v && !v.startsWith('BAY ')) setAddBay('BAY ' + v) }} />
           </Col>
           <Col>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>Thêm</Button>
@@ -796,14 +891,16 @@ function ContainerManagement() {
         </Row>
         <Row gutter={[8, 8]} align="middle" style={{ marginTop: 8 }}>
           <Col xs={12} sm={8} md={5}>
-            <Input placeholder="Folder Hình In" value={addFolderIn} readOnly
-              addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderIn} />}
-            />
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="Folder Hình In" value={addFolderIn} readOnly />
+              <Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderIn} />
+            </Space.Compact>
           </Col>
           <Col xs={12} sm={8} md={5}>
-            <Input placeholder="Folder Hình SC" value={addFolderSC} readOnly
-              addonAfter={<Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderSC} />}
-            />
+            <Space.Compact style={{ width: '100%' }}>
+              <Input placeholder="Folder Hình SC" value={addFolderSC} readOnly />
+              <Button size="small" type="text" icon={<FolderOpenOutlined />} onClick={handlePickFolderSC} />
+            </Space.Compact>
           </Col>
           <Col xs={12} sm={8} md={2}>
             <Space>
@@ -851,19 +948,22 @@ function ContainerManagement() {
             </Col>
             <Col span={12}>
               <Form.Item name="shippingLine" label="Hãng tàu" rules={[{ required: true, message: 'Chọn hãng tàu' }]}>
-                <Select placeholder="Chọn hãng tàu">
-                  <Option value="MSC">MSC</Option>
-                  <Option value="MAERSK">MAERSK</Option>
-                  <Option value="CMA CGM">CMA CGM</Option>
-                  <Option value="COSCO">COSCO</Option>
-                  <Option value="HAPAG-LLOYD">HAPAG-LLOYD</Option>
-                  <Option value="ONE">ONE</Option>
-                  <Option value="EVERGREEN">EVERGREEN</Option>
-                  <Option value="YANG MING">YANG MING</Option>
-                  <Option value="ZIM">ZIM</Option>
-                  <Option value="WAN HAI">WAN HAI</Option>
-                  <Option value="Other">Other</Option>
-                </Select>
+                <AutoComplete placeholder="Chọn hoặc nhập hãng tàu"
+                  options={[
+                    { value: 'MSC' },
+                    { value: 'MAERSK' },
+                    { value: 'CMA CGM' },
+                    { value: 'COSCO' },
+                    { value: 'HAPAG-LLOYD' },
+                    { value: 'ONE' },
+                    { value: 'EVERGREEN' },
+                    { value: 'YANG MING' },
+                    { value: 'ZIM' },
+                    { value: 'WAN HAI' },
+                    { value: 'Other' },
+                  ]}
+                  filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -875,14 +975,17 @@ function ContainerManagement() {
             </Col>
             <Col span={12}>
               <Form.Item name="location" label="Phân Loại">
-                <Input placeholder="VD: Hư hỏng nặng / Nhẹ / ..." onInput={e => e.target.value = e.target.value.toUpperCase()} />
+                <AutoComplete placeholder="VD: Hư hỏng nặng / Nhẹ / ..."
+                  options={[...new Set([...locationList, ...modalLocationOptions, ...(form.getFieldValue('location') ? [form.getFieldValue('location')] : [])])].filter(Boolean).map(o => ({ value: o }))}
+                  filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+                />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="bay" label="Bay">
-                <Input placeholder="VD: A01" onInput={e => e.target.value = e.target.value.toUpperCase()} />
+                <Input placeholder="VD: A01" onInput={e => e.target.value = e.target.value.toUpperCase()} onBlur={e => { const v = e.target.value.toUpperCase().trim(); if (v && !v.startsWith('BAY ')) { const f = 'BAY ' + v; e.target.value = f; form.setFieldValue('bay', f) } }} />
               </Form.Item>
             </Col>
           </Row>
@@ -892,50 +995,47 @@ function ContainerManagement() {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="folderIn" label="Folder Hình In">
-                <Input placeholder="Chọn folder In..." readOnly
-                  addonAfter={
-                    <Button size="small" type="text" icon={<FolderOpenOutlined />}
-                      onClick={async () => {
-                        try {
-                          const dir = await window.showDirectoryPicker()
-                          form.setFieldValue('folderIn', dir.name)
-                        } catch {}
-                      }}
-                    />
-                  }
-                />
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input placeholder="Chọn folder In..." readOnly />
+                  <Button size="small" type="text" icon={<FolderOpenOutlined />}
+                    onClick={async () => {
+                      try {
+                        const dir = await window.showDirectoryPicker()
+                        form.setFieldValue('folderIn', dir.name)
+                      } catch {}
+                    }}
+                  />
+                </Space.Compact>
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="folderSC" label="Folder Hình SC">
-                <Input placeholder="Chọn folder SC..." readOnly
-                  addonAfter={
-                    <Button size="small" type="text" icon={<FolderOpenOutlined />}
-                      onClick={async () => {
-                        try {
-                          const dir = await window.showDirectoryPicker()
-                          form.setFieldValue('folderSC', dir.name)
-                        } catch {}
-                      }}
-                    />
-                  }
-                />
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input placeholder="Chọn folder SC..." readOnly />
+                  <Button size="small" type="text" icon={<FolderOpenOutlined />}
+                    onClick={async () => {
+                      try {
+                        const dir = await window.showDirectoryPicker()
+                        form.setFieldValue('folderSC', dir.name)
+                      } catch {}
+                    }}
+                  />
+                </Space.Compact>
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="folderSC2" label="Folder Hình SC 2">
-                <Input placeholder="Chọn folder SC 2..." readOnly
-                  addonAfter={
-                    <Button size="small" type="text" icon={<FolderOpenOutlined />}
-                      onClick={async () => {
-                        try {
-                          const dir = await window.showDirectoryPicker()
-                          form.setFieldValue('folderSC2', dir.name)
-                        } catch {}
-                      }}
-                    />
-                  }
-                />
+                <Space.Compact style={{ width: '100%' }}>
+                  <Input placeholder="Chọn folder SC 2..." readOnly />
+                  <Button size="small" type="text" icon={<FolderOpenOutlined />}
+                    onClick={async () => {
+                      try {
+                        const dir = await window.showDirectoryPicker()
+                        form.setFieldValue('folderSC2', dir.name)
+                      } catch {}
+                    }}
+                  />
+                </Space.Compact>
               </Form.Item>
             </Col>
           </Row>

@@ -8,12 +8,23 @@ dayjs.extend(isoWeek)
 
 const router = Router()
 
-// GET /api/locks — list all locks
+// GET /api/locks — list all locks, with optional filters
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { date } = req.query
+    const { date, dateFrom, dateTo, shift, search, shippingLine, size, location } = req.query
     const query = {}
-    if (date) query.date = date
+    if (date) {
+      query.date = date
+    } else if (dateFrom || dateTo) {
+      query.date = {}
+      if (dateFrom) query.date.$gte = dateFrom
+      if (dateTo) query.date.$lte = dateTo
+    }
+    if (shift) query.shift = shift
+    if (search) query['items.containerNo'] = { $regex: search, $options: 'i' }
+    if (shippingLine) query['items.shippingLine'] = { $regex: shippingLine, $options: 'i' }
+    if (size) query['items.size'] = { $regex: size, $options: 'i' }
+    if (location) query['items.location'] = { $regex: location, $options: 'i' }
     const locks = await ProductionLock.find(query).sort({ date: -1, shift: -1 })
     res.json(locks)
   } catch (err) {
@@ -170,7 +181,16 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
     const todayStr = now.format('YYYY-MM-DD')
     const monthPrefix = now.format('YYYY-MM')
 
-    const allLocks = await ProductionLock.find({}).sort({ date: -1, shift: -1 }).lean()
+    const { dateFrom, dateTo } = req.query
+
+    const baseQuery = {}
+    if (dateFrom || dateTo) {
+      baseQuery.date = {}
+      if (dateFrom) baseQuery.date.$gte = dateFrom
+      if (dateTo) baseQuery.date.$lte = dateTo
+    }
+
+    const allLocks = await ProductionLock.find(baseQuery).sort({ date: -1, shift: -1 }).lean()
 
     const totalLocks = allLocks.length
     const totalLockedItems = allLocks.reduce((s, l) => s + (l.items?.length || 0), 0)
@@ -184,7 +204,7 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
     const monthLockedItems = monthLocks.reduce((s, l) => s + (l.items?.length || 0), 0)
 
     const dayMap = {}
-    monthLocks.forEach(lock => {
+    allLocks.forEach(lock => {
       dayMap[lock.date] = (dayMap[lock.date] || 0) + (lock.items?.length || 0)
     })
     const byDay = Object.entries(dayMap)
@@ -237,7 +257,7 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
       .slice(-12)
 
     const dailyDetailMap = {}
-    monthLocks.forEach(lock => {
+    allLocks.forEach(lock => {
       if (!dailyDetailMap[lock.date]) {
         dailyDetailMap[lock.date] = { date: lock.date, total: 0, shippingLines: {} }
       }
@@ -257,6 +277,51 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
           .sort((a, b) => b.count - a.count),
       }))
 
+    const locationMap = {}
+    allLocks.forEach(lock => {
+      ;(lock.items || []).forEach(item => {
+        const loc = item.location || '(không có)'
+        if (!locationMap[loc]) locationMap[loc] = { location: loc, count: 0 }
+        locationMap[loc].count++
+      })
+    })
+    const byLocation = Object.values(locationMap)
+      .sort((a, b) => b.count - a.count)
+      .map((item, i, arr) => {
+        const total = arr.reduce((s, x) => s + x.count, 0)
+        return { ...item, percentage: total > 0 ? Math.round((item.count / total) * 100) : 0 }
+      })
+
+    const remarkMap = {}
+    allLocks.forEach(lock => {
+      ;(lock.items || []).forEach(item => {
+        if (item.remark) {
+          const r = item.remark
+          remarkMap[r] = (remarkMap[r] || 0) + 1
+        }
+      })
+    })
+    const byRemark = Object.entries(remarkMap)
+      .map(([remark, count]) => ({ remark, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15)
+
+    // remarkDetail: per-day breakdown of identical remarks
+    const remarkDetailMap = {}
+    allLocks.forEach(lock => {
+      const seen = {}
+      ;(lock.items || []).forEach(item => {
+        if (!item.remark) return
+        const key = `${lock.date}|${item.remark}`
+        if (!remarkDetailMap[key]) {
+          remarkDetailMap[key] = { date: lock.date, remark: item.remark, count: 0 }
+        }
+        remarkDetailMap[key].count++
+      })
+    })
+    const remarkDetail = Object.values(remarkDetailMap)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
     const recentLocks = allLocks.slice(0, 10)
 
     res.json({
@@ -271,6 +336,9 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
       byWeek,
       byMonth,
       byShippingLine,
+      byLocation,
+      byRemark,
+      remarkDetail,
       dailyDetail,
       recentLocks,
     })

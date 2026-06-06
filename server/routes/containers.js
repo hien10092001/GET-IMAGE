@@ -34,7 +34,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, page = 1, limit = 20, sort = 'createdAt' } = req.query
+    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt' } = req.query
     const query = {}
 
     if (search) {
@@ -43,11 +43,15 @@ router.get('/', authMiddleware, async (req, res) => {
         { shippingLine: { $regex: search, $options: 'i' } },
         { location: { $regex: search, $options: 'i' } },
       ]
-    } else {
+    } else if (locked === undefined || locked === '') {
       query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
+    if (location) query.location = { $regex: location, $options: 'i' }
+    if (remark) query.remark = { $regex: remark, $options: 'i' }
+    if (locked === 'true') query.locked = true
+    else if (locked === 'false') query.locked = false
     if (dateFrom || dateTo) {
       query.createdAt = {}
       if (dateFrom) query.createdAt.$gte = new Date(dateFrom)
@@ -84,18 +88,22 @@ router.get('/', authMiddleware, async (req, res) => {
 
 router.get('/all', authMiddleware, async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo } = req.query
+    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked } = req.query
     const query = {}
     if (search) {
       query.$or = [
         { containerNo: { $regex: search, $options: 'i' } },
         { shippingLine: { $regex: search, $options: 'i' } },
       ]
-    } else {
+    } else if (locked === undefined || locked === '') {
       query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
+    if (location) query.location = { $regex: location, $options: 'i' }
+    if (remark) query.remark = { $regex: remark, $options: 'i' }
+    if (locked === 'true') query.locked = true
+    else if (locked === 'false') query.locked = false
     if (dateFrom || dateTo) {
       query.createdAt = {}
       if (dateFrom) query.createdAt.$gte = new Date(dateFrom)
@@ -219,6 +227,17 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
     const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
 
+    const { dateFrom, dateTo } = req.query
+    const dateMatch = {}
+    if (dateFrom || dateTo) {
+      if (dateFrom) dateMatch.$gte = new Date(dateFrom)
+      if (dateTo) {
+        const end = new Date(dateTo)
+        end.setDate(end.getDate() + 1)
+        dateMatch.$lt = end
+      }
+    }
+
     const [
       totalContainers,
       todayContainers,
@@ -226,25 +245,29 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
       monthContainers,
       lastMonthContainers,
     ] = await Promise.all([
-      Container.countDocuments(),
+      Container.countDocuments(Object.keys(dateMatch).length ? { createdAt: dateMatch } : {}),
       Container.countDocuments({ createdAt: { $gte: todayStart, $lt: todayEnd } }),
       Container.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
       Container.countDocuments({ createdAt: { $gte: monthStart, $lt: monthEnd } }),
       Container.countDocuments({ createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd } }),
     ])
 
+    const baseMatch = Object.keys(dateMatch).length ? { createdAt: dateMatch } : { createdAt: { $gte: monthStart, $lt: monthEnd } }
+
     const [byDay, byMonth, byWeek, byShippingLine, bySize, topContainers, dailyDetail] = await Promise.all([
       Container.aggregate([
-        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: baseMatch },
         { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, total: { $sum: 1 } } },
         { $sort: { _id: 1 } },
       ]),
       Container.aggregate([
+        { $match: baseMatch },
         { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }, total: { $sum: 1 } } },
         { $sort: { _id: 1 } },
         { $limit: 12 },
       ]),
       Container.aggregate([
+        { $match: baseMatch },
         {
           $group: {
             _id: { week: { $isoWeek: '$createdAt' }, year: { $isoWeekYear: '$createdAt' } },
@@ -268,23 +291,25 @@ router.get('/stats/dashboard', authMiddleware, async (req, res) => {
         },
       ]),
       Container.aggregate([
+        { $match: baseMatch },
         { $group: { _id: '$shippingLine', total: { $sum: 1 } } },
         { $sort: { total: -1 } },
         { $limit: 10 },
       ]),
       Container.aggregate([
+        { $match: baseMatch },
         { $group: { _id: '$size', total: { $sum: 1 } } },
         { $sort: { total: -1 } },
       ]),
       Container.aggregate([
-        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: baseMatch },
         { $group: { _id: { containerNo: '$containerNo', shippingLine: '$shippingLine', size: '$size', location: '$location', bay: '$bay', remark: '$remark' }, count: { $sum: 1 } } },
         { $sort: { count: -1 } },
         { $limit: 5 },
         { $replaceRoot: { newRoot: { $mergeObjects: ['$_id', { count: '$count' }] } } },
       ]),
       Container.aggregate([
-        { $match: { createdAt: { $gte: monthStart, $lt: monthEnd } } },
+        { $match: baseMatch },
         { $group: { _id: { date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, shippingLine: '$shippingLine' }, count: { $sum: 1 } } },
         { $sort: { '_id.date': 1, count: -1 } },
         { $group: { _id: '$_id.date', shippingLines: { $push: { name: '$_id.shippingLine', count: '$count' } }, total: { $sum: '$count' } } },

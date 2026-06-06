@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Row, Col, Card, Statistic, Alert, Table, Tag, Tabs } from 'antd'
+import { Row, Col, Card, Statistic, Alert, Table, Tag, Tabs, DatePicker } from 'antd'
 import { ContainerOutlined, CalendarOutlined, FileTextOutlined, LockOutlined, RiseOutlined, FallOutlined, MinusOutlined, BarChartOutlined, TableOutlined, ExperimentOutlined, SwapOutlined } from '@ant-design/icons'
 import api from '../services/api'
 import dayjs from 'dayjs'
 import isoWeek from 'dayjs/plugin/isoWeek'
 
 dayjs.extend(isoWeek)
+
+const { RangePicker } = DatePicker
 
 const COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#eb2f96', '#13c2c2', '#fa8c16', '#2f54eb', '#a0d911']
 let Recharts = null
@@ -26,12 +28,20 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [chartsReady, setChartsReady] = useState(false)
+  const [dateRange, setDateRange] = useState(null)
 
-  useEffect(() => {
+  const buildParams = () => {
+    if (!dateRange || !dateRange[0] || !dateRange[1]) return ''
+    const from = dateRange[0].format('YYYY-MM-DD')
+    const to = dateRange[1].format('YYYY-MM-DD')
+    return `?dateFrom=${from}&dateTo=${to}`
+  }
+
+  const fetchData = (params) => {
     setLoading(true)
     Promise.all([
-      api.get('/containers/stats/dashboard').then(r => r.data),
-      api.get('/locks/stats/dashboard').then(r => r.data),
+      api.get(`/containers/stats/dashboard${params}`).then(r => r.data),
+      api.get(`/locks/stats/dashboard${params}`).then(r => r.data),
     ]).then(([cStats, lStats]) => {
       setContainerData(cStats)
       setLockData(lStats)
@@ -40,7 +50,11 @@ function Dashboard() {
     }).finally(() => {
       setLoading(false)
     })
-  }, [])
+  }
+
+  useEffect(() => {
+    fetchData(buildParams())
+  }, [dateRange])
 
   useEffect(() => {
     import('recharts').then(mod => {
@@ -85,6 +99,9 @@ function Dashboard() {
   const byDayData = useMemo(() => (lockData?.byDay || []).slice(), [lockData])
   const byShiftData = useMemo(() => (lockData?.byShift || []), [lockData])
   const byShippingLineData = useMemo(() => (lockData?.byShippingLine || []), [lockData])
+  const byLocationData = useMemo(() => (lockData?.byLocation || []), [lockData])
+  const byRemarkData = useMemo(() => (lockData?.byRemark || []), [lockData])
+  const remarkDetailData = useMemo(() => (lockData?.remarkDetail || []), [lockData])
 
   const lockTableColumns = [
     { title: 'Ngày', dataIndex: 'date', key: 'date', width: 110, render: v => dayjs(v).format('DD/MM/YYYY') },
@@ -200,6 +217,60 @@ function Dashboard() {
     )
   }
 
+  function renderClassificationChart() {
+    if (!chartsReady || !Recharts) return null
+    const { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend } = Recharts
+    const CLASS_COLORS = ['#1890ff', '#52c41a', '#faad14', '#f5222d', '#722ed1', '#eb2f96', '#13c2c2', '#fa8c16', '#2f54eb', '#a0d911']
+    return (
+      <>
+        <Row gutter={[12, 12]} className="mb-4">
+          <Col xs={24} lg={12}>
+            <Card title={<span><BarChartOutlined /> Phân bố chỉ số phân loại</span>} className="shadow-sm" size="small">
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={byLocationData} layout="vertical" margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis dataKey="location" type="category" tick={{ fontSize: 11 }} width={120} />
+                  <Tooltip formatter={(value, name) => [value, name === 'count' ? 'Số lượng' : name]} />
+                  <Bar dataKey="count" fill="#13c2c2" name="Số lượng" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </Card>
+          </Col>
+          <Col xs={24} lg={12}>
+            <Card title={<span><ExperimentOutlined /> Tỉ trọng phân loại</span>} className="shadow-sm" size="small">
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie data={byLocationData} dataKey="count" nameKey="location" cx="50%" cy="50%" outerRadius={90} label={({ location, percentage }) => `${location}: ${percentage}%`}>
+                    {byLocationData.map((_, i) => (
+                      <Cell key={i} fill={CLASS_COLORS[i % CLASS_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value, _, props) => [value, props.payload.location]} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </Card>
+          </Col>
+        </Row>
+        <Row gutter={[12, 12]} className="mb-4">
+          <Col xs={24} lg={24}>
+            <Card title={<span><FileTextOutlined /> Ghi chú phổ biến (Top 15)</span>} className="shadow-sm" size="small">
+              <div className="flex flex-wrap gap-2">
+                {byRemarkData.map((r, i) => (
+                  <Tag key={i} color={CLASS_COLORS[i % CLASS_COLORS.length]} className="mb-1">
+                    {r.remark}: {r.count}
+                  </Tag>
+                ))}
+                {byRemarkData.length === 0 && <span className="text-gray-400">Không có ghi chú</span>}
+              </div>
+            </Card>
+          </Col>
+        </Row>
+      </>
+    )
+  }
+
   function renderMonthChart() {
     if (!chartsReady || !Recharts) return null
     const { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip } = Recharts
@@ -228,8 +299,36 @@ function Dashboard() {
   if (error) return <Alert message={error} type="error" showIcon />
   if (!lockData || !containerData) return null
 
+  const remarkColumns = [
+    { title: 'Ngày', dataIndex: 'date', key: 'date', width: 110, render: v => dayjs(v).format('DD/MM/YYYY') },
+    { title: 'Ghi chú', dataIndex: 'remark', key: 'remark' },
+    { title: 'Số lượng giống', dataIndex: 'count', key: 'count', width: 100, render: v => <Tag color={v > 5 ? 'red' : v > 2 ? 'orange' : 'blue'}>{v}</Tag> },
+  ]
+
   return (
     <div>
+      <Card className="mb-4 shadow-sm" size="small">
+        <Row gutter={16} align="middle">
+          <Col flex="auto">
+            <span style={{ fontWeight: 600, marginRight: 12 }}>Khoảng ngày:</span>
+            <RangePicker
+              value={dateRange}
+              onChange={(dates) => setDateRange(dates)}
+              format="DD/MM/YYYY"
+              allowClear
+              placeholder={['Từ ngày', 'Đến ngày']}
+            />
+          </Col>
+          <Col>
+            {dateRange && dateRange[0] && dateRange[1] && (
+              <span style={{ color: '#888', fontSize: 13 }}>
+                {dateRange[0].format('DD/MM/YYYY')} - {dateRange[1].format('DD/MM/YYYY')}
+              </span>
+            )}
+          </Col>
+        </Row>
+      </Card>
+
       <Row gutter={[12, 12]}>
         <Col xs={12} sm={8} lg={4}>
           <Card className="shadow-sm" size="small">
@@ -404,6 +503,49 @@ function Dashboard() {
                     pagination={false}
                     size="small"
                     scroll={{ x: 400 }}
+                  />
+                </Card>
+              </div>
+            ),
+          },
+          {
+            key: 'classification',
+            label: <span><ExperimentOutlined /> Phân Loại / Ghi Chú</span>,
+            children: (
+              <div>
+                <Row gutter={[12, 12]} className="mb-4">
+                  <Col xs={12} sm={8} lg={6}>
+                    <Card className="shadow-sm" size="small">
+                      <Statistic title="Số nhóm phân loại" value={byLocationData.length} prefix={<ExperimentOutlined />} valueStyle={{ color: '#722ed1', fontSize: 22 }} />
+                    </Card>
+                  </Col>
+                  <Col xs={12} sm={8} lg={6}>
+                    <Card className="shadow-sm" size="small">
+                      <Statistic title="SL phân loại nhiều nhất" value={byLocationData[0]?.count || 0} prefix={<RiseOutlined />} valueStyle={{ color: '#52c41a', fontSize: 22 }} />
+                      <div style={{ fontSize: 12, color: '#999' }}>{byLocationData[0]?.location || 'N/A'}</div>
+                    </Card>
+                  </Col>
+                  <Col xs={12} sm={8} lg={6}>
+                    <Card className="shadow-sm" size="small">
+                      <Statistic title="SL ghi chú" value={byRemarkData.length} prefix={<FileTextOutlined />} valueStyle={{ color: '#eb2f96', fontSize: 22 }} />
+                    </Card>
+                  </Col>
+                  <Col xs={12} sm={8} lg={6}>
+                    <Card className="shadow-sm" size="small">
+                      <Statistic title="Ghi chú nhiều nhất" value={byRemarkData[0]?.count || 0} prefix={<RiseOutlined />} valueStyle={{ color: '#fa8c16', fontSize: 22 }} />
+                      <div style={{ fontSize: 12, color: '#999' }}>{byRemarkData[0]?.remark || 'N/A'}</div>
+                    </Card>
+                  </Col>
+                </Row>
+                {renderClassificationChart()}
+                <Card title={<span><TableOutlined /> Chi tiết ghi chú theo ngày (số lượng giống nhau)</span>} className="shadow-sm" size="small">
+                  <Table
+                    columns={remarkColumns}
+                    dataSource={remarkDetailData}
+                    rowKey={(r, i) => `${r.date}-${r.remark}-${i}`}
+                    pagination={{ pageSize: 15, size: 'small' }}
+                    size="small"
+                    scroll={{ x: 500 }}
                   />
                 </Card>
               </div>

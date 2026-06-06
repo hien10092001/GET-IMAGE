@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined } from '@ant-design/icons'
+import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -25,17 +25,33 @@ function LockProduction() {
   const [addLocation, setAddLocation] = useState('')
   const [addRemark, setAddRemark] = useState('')
   const addNoRef = useRef(null)
+  const [searchText, setSearchText] = useState('')
+  const [search, setSearch] = useState('')
+  const searchTimerRef = useRef(null)
+  const [filterDateRange, setFilterDateRange] = useState(null)
+  const [filterShift, setFilterShift] = useState('')
+  const [filterShippingLine, setFilterShippingLine] = useState('')
+  const [filterSize, setFilterSize] = useState('')
 
   const fetchLocks = () => {
-    setLoading(true)
-    api.get('/locks').then(res => {
+    queueMicrotask(() => setLoading(true))
+    const params = {}
+    if (search) params.search = search
+    if (filterDateRange && filterDateRange[0] && filterDateRange[1]) {
+      params.dateFrom = filterDateRange[0].format('YYYY-MM-DD')
+      params.dateTo = filterDateRange[1].format('YYYY-MM-DD')
+    }
+    if (filterShift) params.shift = filterShift
+    if (filterShippingLine) params.shippingLine = filterShippingLine
+    if (filterSize) params.size = filterSize
+    api.get('/locks', { params }).then(res => {
       setLocks(res.data)
     }).catch(() => {
       message.error('Lỗi tải dữ liệu')
     }).finally(() => setLoading(false))
   }
 
-  useEffect(() => { fetchLocks() }, [])
+  useEffect(() => { fetchLocks() }, [search, filterDateRange, filterShift, filterShippingLine, filterSize])
 
   const handleLock = async () => {
     try {
@@ -273,6 +289,65 @@ function LockProduction() {
         </Row>
       </Card>
 
+      <Card className="mb-4">
+        <Row gutter={[8, 8]} align="middle">
+          <Col xs={24} md={6}>
+            <Input
+              placeholder="Tìm kiếm container..."
+              prefix={<SearchOutlined />}
+              value={searchText}
+              onChange={e => {
+                const val = e.target.value
+                setSearchText(val)
+                clearTimeout(searchTimerRef.current)
+                searchTimerRef.current = setTimeout(() => setSearch(val), 300)
+              }}
+              allowClear
+              onClear={() => { setSearchText(''); setSearch('') }}
+            />
+          </Col>
+          <Col xs={12} md={5}>
+            <DatePicker.RangePicker
+              value={filterDateRange}
+              onChange={dates => setFilterDateRange(dates)}
+              format="DD/MM/YYYY"
+              placeholder={['Từ ngày', 'Đến ngày']}
+              style={{ width: '100%' }}
+            />
+          </Col>
+          <Col xs={12} md={3}>
+            <Select
+              placeholder="Ca"
+              allowClear
+              className="w-full"
+              value={filterShift || undefined}
+              onChange={v => setFilterShift(v || '')}
+            >
+              <Option value="sáng">Sáng</Option>
+              <Option value="tối">Tối</Option>
+            </Select>
+          </Col>
+          <Col xs={12} md={3}>
+            <Input
+              placeholder="Hãng tàu"
+              value={filterShippingLine}
+              onChange={e => setFilterShippingLine(e.target.value)}
+              allowClear
+              onClear={() => setFilterShippingLine('')}
+            />
+          </Col>
+          <Col xs={12} md={3}>
+            <Input
+              placeholder="Size"
+              value={filterSize}
+              onChange={e => setFilterSize(e.target.value.toUpperCase())}
+              allowClear
+              onClear={() => setFilterSize('')}
+            />
+          </Col>
+        </Row>
+      </Card>
+
       <Card title="Lịch sử chốt sản lượng" className="mb-4">
         <Table
           columns={addColumns}
@@ -399,19 +474,22 @@ function LockProduction() {
             <Input placeholder="VD: TEMU5750298" />
           </Form.Item>
           <Form.Item name="shippingLine" label="Hãng tàu" rules={[{ required: true, message: 'Chọn hãng tàu' }]}>
-            <Select placeholder="Chọn hãng tàu">
-              <Option value="MSC">MSC</Option>
-              <Option value="MAERSK">MAERSK</Option>
-              <Option value="CMA CGM">CMA CGM</Option>
-              <Option value="COSCO">COSCO</Option>
-              <Option value="HAPAG-LLOYD">HAPAG-LLOYD</Option>
-              <Option value="ONE">ONE</Option>
-              <Option value="EVERGREEN">EVERGREEN</Option>
-              <Option value="YANG MING">YANG MING</Option>
-              <Option value="ZIM">ZIM</Option>
-              <Option value="WAN HAI">WAN HAI</Option>
-              <Option value="Other">Other</Option>
-            </Select>
+            <AutoComplete placeholder="Chọn hoặc nhập hãng tàu"
+              options={[
+                { value: 'MSC' },
+                { value: 'MAERSK' },
+                { value: 'CMA CGM' },
+                { value: 'COSCO' },
+                { value: 'HAPAG-LLOYD' },
+                { value: 'ONE' },
+                { value: 'EVERGREEN' },
+                { value: 'YANG MING' },
+                { value: 'ZIM' },
+                { value: 'WAN HAI' },
+                { value: 'Other' },
+              ]}
+              filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+            />
           </Form.Item>
           <Row gutter={12}>
             <Col span={12}>
