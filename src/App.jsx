@@ -935,6 +935,8 @@ function RenameSubdirs() {
     return total
   }
 
+  const RENAME_BATCH = 30
+
   const startRename = async () => {
     if (!parentDir) return
     if (mode === 'subdirs' && selectedDirs.size === 0) return
@@ -944,47 +946,31 @@ function RenameSubdirs() {
       const images = directImages
       setStatus('Đang đổi tên ảnh...')
       setProgress({ current: 0, total: images.length })
+      let errors = 0
 
       for (let i = 0; i < images.length; i++) {
         const img = images[i]
-        const newName = getNewName(parentDir.name, startNum + i, img.ext)
-        setProgress({ current: i + 1, total: images.length })
-        setStatus(`Đang đổi ${i + 1}/${images.length}: ${img.name} → ${newName}`)
-
         try {
-          const file = await img.handle.getFile()
-          const newFileHandle = await parentDir.getFileHandle(newName, { create: true })
-          const writable = await newFileHandle.createWritable()
-          await writable.write(file)
-          await writable.close()
-          await parentDir.removeEntry(img.name)
-        } catch (err) {
-          setStatus(`Lỗi "${img.name}": ${err.message}`)
-          return
+          const newName = getNewName(parentDir.name, startNum + i, img.ext)
+          await img.handle.move(newName)
+        } catch {
+          errors++
+        }
+        if ((i + 1) % RENAME_BATCH === 0 || i === images.length - 1) {
+          setProgress({ current: i + 1, total: images.length })
+          setStatus(`Đang đổi ${i + 1}/${images.length} ảnh...`)
         }
       }
 
-      setStatus(`Hoàn thành! Đã đổi tên ${images.length} ảnh.`)
+      setStatus(errors ? `Hoàn thành! Đã đổi ${images.length - errors}/${images.length} ảnh (${errors} lỗi).` : `Hoàn thành! Đã đổi tên ${images.length} ảnh.`)
       setProgress({ current: 0, total: 0 })
       await scanDirectImages()
       return
     }
 
     const dirsToProcess = subdirs.filter((_, i) => selectedDirs.has(i))
+    const dirImageMap = []
     let totalImages = 0
-    for (const dir of dirsToProcess) {
-      for await (const [name, handle] of dir.handle.entries()) {
-        if (handle.kind === 'file') {
-          const ext = name.split('.').pop().toLowerCase()
-          if (imageExts.has(ext)) totalImages++
-        }
-      }
-    }
-
-    setStatus('Đang đổi tên ảnh...')
-    setProgress({ current: 0, total: totalImages })
-
-    let done = 0
     for (const dir of dirsToProcess) {
       const images = []
       for await (const [name, handle] of dir.handle.entries()) {
@@ -996,29 +982,33 @@ function RenameSubdirs() {
         }
       }
       images.sort((a, b) => a.name.localeCompare(b.name))
+      dirImageMap.push({ dir, images })
+      totalImages += images.length
+    }
 
+    setStatus('Đang đổi tên ảnh...')
+    setProgress({ current: 0, total: totalImages })
+
+    let done = 0
+    let errors = 0
+    for (const { dir, images } of dirImageMap) {
       for (let i = 0; i < images.length; i++) {
         const img = images[i]
-        const newName = getNewName(dir.name, startNum + i, img.ext)
-        done++
-        setProgress({ current: done, total: totalImages })
-        setStatus(`Đang đổi ${done}/${totalImages}: ${dir.name}/${img.name} → ${newName}`)
-
         try {
-          const file = await img.handle.getFile()
-          const newFileHandle = await dir.handle.getFileHandle(newName, { create: true })
-          const writable = await newFileHandle.createWritable()
-          await writable.write(file)
-          await writable.close()
-          await dir.handle.removeEntry(img.name)
-        } catch (err) {
-          setStatus(`Lỗi "${dir.name}/${img.name}": ${err.message}`)
-          return
+          const newName = getNewName(dir.name, startNum + i, img.ext)
+          await img.handle.move(newName)
+        } catch {
+          errors++
+        }
+        done++
+        if (done % RENAME_BATCH === 0 || done === totalImages) {
+          setProgress({ current: done, total: totalImages })
+          setStatus(`Đang đổi ${done}/${totalImages} ảnh...`)
         }
       }
     }
 
-    setStatus(`Hoàn thành! Đã đổi tên ${done} ảnh.`)
+    setStatus(errors ? `Hoàn thành! Đã đổi ${done - errors}/${done} ảnh (${errors} lỗi).` : `Hoàn thành! Đã đổi tên ${done} ảnh.`)
     setProgress({ current: 0, total: 0 })
     setDirImages({})
     setExpandedDir(null)
