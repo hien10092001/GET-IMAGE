@@ -55,6 +55,7 @@ function ContainerManagement() {
   const [remarkListOpen, setRemarkListOpen] = useState(false)
   const [editingListItem, setEditingListItem] = useState(null)
   const [listInputValue, setListInputValue] = useState('')
+  const [refSearch, setRefSearch] = useState('')
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewData, setPreviewData] = useState([])
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -1042,17 +1043,38 @@ function ContainerManagement() {
         </Form>
       </Modal>
 
-      <Modal title="Reference Container Imported" open={viewRefOpen} onCancel={() => setViewRefOpen(false)} footer={null} width={700}>
+      <Modal title="Danh sách Tồn (Reference)" open={viewRefOpen} onCancel={() => setViewRefOpen(false)} footer={
+        referenceData.length > 0 ? (
+          <Popconfirm title="Xóa tất cả dữ liệu tồn?" onConfirm={() => { setReferenceData([]); message.success('Đã xóa tất cả dữ liệu tồn') }} okText="Xóa hết" cancelText="Hủy" okButtonProps={{ danger: true }}>
+            <Button danger icon={<DeleteOutlined />}>Xóa hết</Button>
+          </Popconfirm>
+        ) : null
+      } width={800}>
+        <div className="mb-2">
+          <Input placeholder="Tìm kiếm trong danh sách tồn..." prefix={<SearchOutlined />} onChange={e => setRefSearch(e.target.value)} allowClear />
+        </div>
         <Table
-          dataSource={referenceData}
+          dataSource={referenceData.filter(r => {
+            if (!refSearch) return true
+            const q = refSearch.toUpperCase()
+            return r.containerNo.toUpperCase().includes(q) || r.shippingLine.toUpperCase().includes(q) || r.size.toUpperCase().includes(q) || (r.bay || '').toUpperCase().includes(q)
+          })}
           rowKey="containerNo"
-          pagination={false}
+          pagination={{ pageSize: 50, showTotal: t => `Tổng ${t} container` }}
           size="small"
           columns={[
             { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo' },
             { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine' },
             { title: 'Size', dataIndex: 'size', key: 'size' },
             { title: 'Bay', dataIndex: 'bay', key: 'bay' },
+            {
+              title: 'Xóa', key: 'action', width: 60, align: 'center',
+              render: (_, record) => (
+                <Popconfirm title="Xóa container này khỏi danh sách tồn?" onConfirm={() => { setReferenceData(p => p.filter(r => r.containerNo !== record.containerNo || r.shippingLine !== record.shippingLine)); message.success('Đã xóa') }} okText="Xóa" cancelText="Hủy">
+                  <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+                </Popconfirm>
+              ),
+            },
           ]}
         />
       </Modal>

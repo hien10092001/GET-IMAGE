@@ -143,6 +143,7 @@ function ExcelMatcher() {
   const [notFoundCodes, setNotFoundCodes] = useState([])
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ current: 0, total: 0 })
+  const [deleteAfterCopy, setDeleteAfterCopy] = useState(true)
 
   const handleExcelUpload = async (e) => {
     const file = e.target.files[0]
@@ -260,14 +261,14 @@ function ExcelMatcher() {
           const writable = await newFileHandle.createWritable()
           await writable.write(file)
           await writable.close()
-          await parentHandle.removeEntry(name)
+          if (deleteAfterCopy) await parentHandle.removeEntry(name)
         } else if (handle.kind === 'directory') {
           await copyDirectory(handle, await destDir.getDirectoryHandle(name, { create: true }))
-          await parentHandle.removeEntry(name, { recursive: true })
+          if (deleteAfterCopy) await parentHandle.removeEntry(name, { recursive: true })
         }
       }
 
-      setStatus('Hoàn thành! Đã chuyển tất cả file vào thư mục đích và xóa khỏi thư mục tổng.')
+      setStatus(`Hoàn thành! Đã chuyển tất cả file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
       setMatchedFiles([])
       setSelectedFiles(new Set())
       setNotFoundCodes([])
@@ -358,16 +359,19 @@ function ExcelMatcher() {
             </div>
 
             <Divider />
+            <Checkbox checked={deleteAfterCopy} onChange={e => setDeleteAfterCopy(e.target.checked)} className="mb-2">
+              Xóa file khỏi thư mục tổng sau khi copy
+            </Checkbox>
             <Button
               type="primary"
-              danger
+              danger={deleteAfterCopy}
               icon={<CopyOutlined />}
               onClick={copyFiles}
               disabled={!destDir || selectedFiles.size === 0}
               size="large"
               block
             >
-              Chuyển {selectedFiles.size} file đã chọn vào thư mục đích (xóa khỏi thư mục tổng)
+              {deleteAfterCopy ? `Chuyển ${selectedFiles.size} file (xóa khỏi thư mục tổng)` : `Copy ${selectedFiles.size} file vào thư mục đích (giữ lại thư mục tổng)`}
             </Button>
           </div>
         )}
