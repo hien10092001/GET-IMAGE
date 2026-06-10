@@ -21,25 +21,38 @@ function ImageCheck() {
   const checkFolderForContainer = async (handle, no) => {
     if (!handle || !no) return false
     try {
+      const entries = []
       for await (const entry of handle.values()) {
-        if (entry.kind === 'directory' && entry.name.includes(no)) return true
+        entries.push(entry)
       }
+      return entries.some(e => e.kind === 'directory' && e.name.includes(no))
     } catch {}
     return false
   }
 
   const readImagesFromFolder = async (handles, containerNo) => {
     const urls = []
+    const readTasks = []
     for (const handle of handles) {
       try {
+        const entries = []
         for await (const entry of handle.values()) {
+          entries.push(entry)
+        }
+        for (const entry of entries) {
           if (entry.kind === 'directory' && entry.name.includes(containerNo)) {
+            const fileEntries = []
             for await (const fileEntry of entry.values()) {
-              if (fileEntry.kind === 'file') {
-                const name = fileEntry.name.toLowerCase()
+              fileEntries.push(fileEntry)
+            }
+            for (const fe of fileEntries) {
+              if (fe.kind === 'file') {
+                const name = fe.name.toLowerCase()
                 if (IMAGE_EXTS.some(ext => name.endsWith(ext))) {
-                  const file = await fileEntry.getFile()
-                  urls.push(URL.createObjectURL(file))
+                  readTasks.push((async () => {
+                    const file = await fe.getFile()
+                    return URL.createObjectURL(file)
+                  })())
                 }
               }
             }
@@ -47,6 +60,8 @@ function ImageCheck() {
         }
       } catch {}
     }
+    const results = await Promise.all(readTasks)
+    urls.push(...results)
     return urls
   }
 

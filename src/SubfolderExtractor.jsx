@@ -6,19 +6,32 @@ import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, Sc
 const { Dragger } = Upload
 const { Title, Text } = Typography
 
+const COPY_CONCURRENCY = 10
+
 async function copyDirectoryContents(srcDirHandle, destDirHandle) {
+  const entries = []
   for await (const [name, handle] of srcDirHandle.entries()) {
-    if (handle.kind === 'file') {
-      const file = await handle.getFile()
-      const newFileHandle = await destDirHandle.getFileHandle(name, { create: true })
-      const writable = await newFileHandle.createWritable()
-      await writable.write(file)
-      await writable.close()
-    } else if (handle.kind === 'directory') {
-      const newDirHandle = await destDirHandle.getDirectoryHandle(name, { create: true })
-      await copyDirectoryContents(handle, newDirHandle)
-    }
+    entries.push({ name, handle })
   }
+  const files = entries.filter(e => e.handle.kind === 'file')
+  const dirs = entries.filter(e => e.handle.kind === 'directory')
+
+  const copyOneFile = async ({ name, handle }) => {
+    const file = await handle.getFile()
+    const newFileHandle = await destDirHandle.getFileHandle(name, { create: true })
+    const writable = await newFileHandle.createWritable()
+    await writable.write(file)
+    await writable.close()
+  }
+
+  for (let i = 0; i < files.length; i += COPY_CONCURRENCY) {
+    await Promise.all(files.slice(i, i + COPY_CONCURRENCY).map(copyOneFile))
+  }
+
+  await Promise.all(dirs.map(async ({ name, handle }) => {
+    const newDirHandle = await destDirHandle.getDirectoryHandle(name, { create: true })
+    await copyDirectoryContents(handle, newDirHandle)
+  }))
 }
 
 function isValidISO(name) {
@@ -137,6 +150,26 @@ function SubfolderExtractor() {
     e.target.value = ''
   }
 
+  const scanOneDir = async (dirHandle, contMap, source, matched, isoItems, foundSet) => {
+    const entries = []
+    for await (const [name, handle] of dirHandle.entries()) {
+      entries.push({ name, handle })
+    }
+    for (const { name, handle } of entries) {
+      if (handle.kind !== 'directory') continue
+      const nameUpper = name.toUpperCase()
+      if (!contMap.has(nameUpper)) continue
+      const info = contMap.get(nameUpper)
+      foundSet.add(nameUpper)
+      if (isValidISO(nameUpper)) {
+        const destSuffix = getDestSuffix(source, info.phanLoai)
+        matched.push({ name, handle, source, info, destSuffix })
+      } else {
+        isoItems.push({ name, handle, source, info })
+      }
+    }
+  }
+
   const scanSources = async () => {
     if (scanMode === 'both' && (!inDir || !scvsDir || excelData.length === 0 || scvsExcelData.length === 0)) return
     if (scanMode === 'in' && (!inDir || excelData.length === 0)) return
@@ -162,38 +195,15 @@ function SubfolderExtractor() {
     const foundInSCVS = new Set()
 
     try {
+      const scanTasks = []
       if (scanMode === 'both' || scanMode === 'in') {
-        for await (const [name, handle] of inDir.entries()) {
-          if (handle.kind !== 'directory') continue
-          const nameUpper = name.toUpperCase()
-          if (!inContMap.has(nameUpper)) continue
-          const info = inContMap.get(nameUpper)
-          foundInIN.add(nameUpper)
-          if (isValidISO(nameUpper)) {
-            const destSuffix = getDestSuffix('IN', info.phanLoai)
-            matched.push({ name, handle, source: 'IN', info, destSuffix })
-          } else {
-            isoItems.push({ name, handle, source: 'IN', info })
-          }
-        }
+        scanTasks.push(scanOneDir(inDir, inContMap, 'IN', matched, isoItems, foundInIN))
       }
-
       if (scanMode === 'both' || scanMode === 'scvs') {
-        for await (const [name, handle] of scvsDir.entries()) {
-          if (handle.kind !== 'directory') continue
-          const nameUpper = name.toUpperCase()
-          if (!scvsContMap.has(nameUpper)) continue
-          const info = scvsContMap.get(nameUpper)
-          foundInSCVS.add(nameUpper)
-          const source = (info.phanLoai === 'SC' || info.phanLoai === 'VS') ? info.phanLoai : 'SC'
-          if (isValidISO(nameUpper)) {
-            const destSuffix = getDestSuffix(source, info.phanLoai)
-            matched.push({ name, handle, source, info, destSuffix })
-          } else {
-            isoItems.push({ name, handle, source, info })
-          }
-        }
+        const source = 'SC'
+        scanTasks.push(scanOneDir(scvsDir, scvsContMap, source, matched, isoItems, foundInSCVS))
       }
+      await Promise.all(scanTasks)
 
       const notFoundBySource = { IN: [], 'SC/VS': [] }
       if (scanMode === 'both' || scanMode === 'in') {
@@ -265,11 +275,15 @@ function SubfolderExtractor() {
     setProgress({ current: 0, total: allItems.length })
 
     try {
-      for (let i = 0; i < allItems.length; i++) {
-        const item = allItems[i]
-        setProgress({ current: i + 1, total: allItems.length })
-        setStatus(`Đang copy ${i + 1}/${allItems.length}: ${item.name} → ${item.parentName}`)
+      const copyOne = async (item, idx) => {
         await copyOneItem(item, item.parentName)
+        setProgress({ current: idx + 1, total: allItems.length })
+        setStatus(`Đang copy ${idx + 1}/${allItems.length}: ${item.name}`)
+      }
+
+      for (let i = 0; i < allItems.length; i += COPY_CONCURRENCY) {
+        const batch = allItems.slice(i, i + COPY_CONCURRENCY)
+        await Promise.all(batch.map((item, j) => copyOne(item, i + j)))
       }
 
       setSummary({

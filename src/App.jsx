@@ -12,19 +12,32 @@ const { Title, Text } = Typography
 
 const { Header, Content } = Layout
 
+const COPY_CONCURRENCY = 10
+
 async function copyDirectoryContents(srcDirHandle, destDirHandle) {
+  const entries = []
   for await (const [name, handle] of srcDirHandle.entries()) {
-    if (handle.kind === 'file') {
-      const file = await handle.getFile()
-      const newFileHandle = await destDirHandle.getFileHandle(name, { create: true })
-      const writable = await newFileHandle.createWritable()
-      await writable.write(file)
-      await writable.close()
-    } else if (handle.kind === 'directory') {
-      const newDirHandle = await destDirHandle.getDirectoryHandle(name, { create: true })
-      await copyDirectoryContents(handle, newDirHandle)
-    }
+    entries.push({ name, handle })
   }
+  const files = entries.filter(e => e.handle.kind === 'file')
+  const dirs = entries.filter(e => e.handle.kind === 'directory')
+
+  const copyOneFile = async ({ name, handle }) => {
+    const file = await handle.getFile()
+    const newFileHandle = await destDirHandle.getFileHandle(name, { create: true })
+    const writable = await newFileHandle.createWritable()
+    await writable.write(file)
+    await writable.close()
+  }
+
+  for (let i = 0; i < files.length; i += COPY_CONCURRENCY) {
+    await Promise.all(files.slice(i, i + COPY_CONCURRENCY).map(copyOneFile))
+  }
+
+  await Promise.all(dirs.map(async ({ name, handle }) => {
+    const newDirHandle = await destDirHandle.getDirectoryHandle(name, { create: true })
+    await copyDirectoryContents(handle, newDirHandle)
+  }))
 }
 
 function App() {
@@ -207,7 +220,8 @@ function ExcelMatcher() {
     const codesSet = new Set(excelData)
 
     try {
-      await scanDirectory(sourceDir, '', codesSet, matches, foundCodes, null)
+      const codeList = excelData
+      await scanDirectory(sourceDir, '', codesSet, matches, foundCodes, null, codeList)
 
       const notFound = excelData.filter(code => !foundCodes.has(code))
       setNotFoundCodes(notFound)
@@ -219,21 +233,45 @@ function ExcelMatcher() {
     }
   }
 
-  const scanDirectory = async (dirHandle, path, codesSet, matches, foundCodes, parentHandle) => {
+  const scanDirectory = async (dirHandle, path, codesSet, matches, foundCodes, parentHandle, codeList) => {
+    const entries = []
     for await (const [name, handle] of dirHandle.entries()) {
+      entries.push({ name, handle })
+    }
+
+    const dirs = []
+    for (const { name, handle } of entries) {
       const fullPath = path ? `${path}/${name}` : name
       const nameUpper = name.toUpperCase()
 
-      if (codesSet.has(nameUpper) || excelData.some(code => nameUpper.includes(code))) {
+      if (codesSet.has(nameUpper) || codeList.some(code => nameUpper.includes(code))) {
         matches.push({ name, handle, fullPath, parentHandle: parentHandle || dirHandle })
-        for (const code of excelData) {
+        for (const code of codeList) {
           if (nameUpper === code || nameUpper.includes(code)) {
             foundCodes.add(code)
           }
         }
       } else if (handle.kind === 'directory') {
-        await scanDirectory(handle, fullPath, codesSet, matches, foundCodes, dirHandle)
+        dirs.push({ name, handle })
       }
+    }
+
+    await Promise.all(dirs.map(d =>
+      scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, codesSet, matches, foundCodes, dirHandle, codeList)
+    ))
+  }
+
+  const copyOneEntry = async ({ name, handle, parentHandle }) => {
+    if (handle.kind === 'file') {
+      const file = await handle.getFile()
+      const newFileHandle = await destDir.getFileHandle(name, { create: true })
+      const writable = await newFileHandle.createWritable()
+      await writable.write(file)
+      await writable.close()
+      if (deleteAfterCopy) await parentHandle.removeEntry(name)
+    } else if (handle.kind === 'directory') {
+      await copyDirectory(handle, await destDir.getDirectoryHandle(name, { create: true }))
+      if (deleteAfterCopy) await parentHandle.removeEntry(name, { recursive: true })
     }
   }
 
@@ -250,22 +288,11 @@ function ExcelMatcher() {
     try {
       setProgress({ current: 0, total: toCopy.length })
 
-      for (let i = 0; i < toCopy.length; i++) {
-        const { name, handle, parentHandle } = toCopy[i]
-        setProgress({ current: i + 1, total: toCopy.length })
-        setStatus(`Đang chuyển ${i + 1}/${toCopy.length}: ${name}`)
-
-        if (handle.kind === 'file') {
-          const file = await handle.getFile()
-          const newFileHandle = await destDir.getFileHandle(name, { create: true })
-          const writable = await newFileHandle.createWritable()
-          await writable.write(file)
-          await writable.close()
-          if (deleteAfterCopy) await parentHandle.removeEntry(name)
-        } else if (handle.kind === 'directory') {
-          await copyDirectory(handle, await destDir.getDirectoryHandle(name, { create: true }))
-          if (deleteAfterCopy) await parentHandle.removeEntry(name, { recursive: true })
-        }
+      for (let i = 0; i < toCopy.length; i += COPY_CONCURRENCY) {
+        const batch = toCopy.slice(i, i + COPY_CONCURRENCY)
+        await Promise.all(batch.map(copyOneEntry))
+        setProgress({ current: Math.min(i + COPY_CONCURRENCY, toCopy.length), total: toCopy.length })
+        setStatus(`Đang chuyển ${Math.min(i + COPY_CONCURRENCY, toCopy.length)}/${toCopy.length}...`)
       }
 
       setStatus(`Hoàn thành! Đã chuyển tất cả file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
@@ -623,27 +650,33 @@ const [maxHeight, setMaxHeight] = useState(600)
     const found = []
 
     const walkDir = async (dirHandle, path, parentHandle) => {
+      const entries = []
       for await (const [name, handle] of dirHandle.entries()) {
-        if (handle.kind === 'file') {
-          const ext = name.split('.').pop().toLowerCase()
-          if (selectedFormats.has(ext)) {
-            const file = await handle.getFile()
-            found.push({
-              name,
-              path: path ? `${path}/${name}` : name,
-              handle,
-              parentHandle: parentHandle || dirHandle,
-              file,
-              size: file.size,
-              ext,
-              compressedSize: null,
-              status: 'pending'
-            })
-          }
-        } else if (handle.kind === 'directory') {
-          await walkDir(handle, path ? `${path}/${name}` : name, handle)
+        entries.push({ name, handle })
+      }
+      const files = entries.filter(e => e.handle.kind === 'file')
+      const dirs = entries.filter(e => e.handle.kind === 'directory')
+
+      for (const { name, handle } of files) {
+        const ext = name.split('.').pop().toLowerCase()
+        if (selectedFormats.has(ext)) {
+          const file = await handle.getFile()
+          found.push({
+            name,
+            path: path ? `${path}/${name}` : name,
+            handle,
+            parentHandle: parentHandle || dirHandle,
+            file,
+            size: file.size,
+            ext,
+            compressedSize: null,
+            status: 'pending'
+          })
         }
       }
+      await Promise.all(dirs.map(({ name, handle }) =>
+        walkDir(handle, path ? `${path}/${name}` : name, handle)
+      ))
     }
 
     try {
@@ -872,12 +905,11 @@ function RenameSubdirs() {
   const scanSubdirs = async () => {
     if (!parentDir) return
     setStatus('Đang quét thư mục tổng...')
-    const dirs = []
+    const entries = []
     for await (const [name, handle] of parentDir.entries()) {
-      if (handle.kind === 'directory') {
-        dirs.push({ name, handle })
-      }
+      entries.push({ name, handle })
     }
+    const dirs = entries.filter(e => e.handle.kind === 'directory')
     dirs.sort((a, b) => a.name.localeCompare(b.name))
     setSubdirs(dirs)
     setSelectedDirs(new Set(dirs.map((_, i) => i)))
@@ -889,15 +921,14 @@ function RenameSubdirs() {
   const scanDirectImages = async () => {
     if (!parentDir) return
     setStatus('Đang quét ảnh...')
-    const images = []
+    const entries = []
     for await (const [name, handle] of parentDir.entries()) {
-      if (handle.kind === 'file') {
-        const ext = name.split('.').pop().toLowerCase()
-        if (imageExts.has(ext)) {
-          images.push({ name, handle, ext })
-        }
-      }
+      entries.push({ name, handle })
     }
+    const images = entries.filter(e => e.handle.kind === 'file').map(({ name, handle }) => {
+      const ext = name.split('.').pop().toLowerCase()
+      return { name, handle, ext }
+    }).filter(i => imageExts.has(i.ext))
     images.sort((a, b) => a.name.localeCompare(b.name))
     setDirectImages(images)
     setStatus(`Tìm thấy ${images.length} ảnh trong thư mục`)
@@ -911,15 +942,14 @@ function RenameSubdirs() {
       return
     }
     setStatus(`Đang quét ảnh trong "${dir.name}"...`)
-    const images = []
+    const entries = []
     for await (const [name, handle] of dir.handle.entries()) {
-      if (handle.kind === 'file') {
-        const ext = name.split('.').pop().toLowerCase()
-        if (imageExts.has(ext)) {
-          images.push({ name, handle, ext })
-        }
-      }
+      entries.push({ name, handle })
     }
+    const images = entries.filter(e => e.handle.kind === 'file').map(({ name, handle }) => {
+      const ext = name.split('.').pop().toLowerCase()
+      return { name, handle, ext }
+    }).filter(i => imageExts.has(i.ext))
     images.sort((a, b) => a.name.localeCompare(b.name))
     setDirImages(prev => ({ ...prev, [index]: images }))
     setExpandedDir(index)
@@ -935,7 +965,7 @@ function RenameSubdirs() {
     return total
   }
 
-  const RENAME_BATCH = 30
+  const RENAME_CONCURRENCY = 20
 
   const startRename = async () => {
     if (!parentDir) return
@@ -947,19 +977,23 @@ function RenameSubdirs() {
       setStatus('Đang đổi tên ảnh...')
       setProgress({ current: 0, total: images.length })
       let errors = 0
+      let done
 
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i]
+      const renameOne = async (img, i) => {
         try {
           const newName = getNewName(parentDir.name, startNum + i, img.ext)
           await img.handle.move(newName)
         } catch {
           errors++
         }
-        if ((i + 1) % RENAME_BATCH === 0 || i === images.length - 1) {
-          setProgress({ current: i + 1, total: images.length })
-          setStatus(`Đang đổi ${i + 1}/${images.length} ảnh...`)
-        }
+      }
+
+      for (let i = 0; i < images.length; i += RENAME_CONCURRENCY) {
+        const batch = images.slice(i, i + RENAME_CONCURRENCY)
+        await Promise.all(batch.map((img, j) => renameOne(img, i + j)))
+        done = Math.min(i + RENAME_CONCURRENCY, images.length)
+        setProgress({ current: done, total: images.length })
+        setStatus(`Đang đổi ${done}/${images.length} ảnh...`)
       }
 
       setStatus(errors ? `Hoàn thành! Đã đổi ${images.length - errors}/${images.length} ảnh (${errors} lỗi).` : `Hoàn thành! Đã đổi tên ${images.length} ảnh.`)
@@ -972,15 +1006,14 @@ function RenameSubdirs() {
     const dirImageMap = []
     let totalImages = 0
     for (const dir of dirsToProcess) {
-      const images = []
+      const entries = []
       for await (const [name, handle] of dir.handle.entries()) {
-        if (handle.kind === 'file') {
-          const ext = name.split('.').pop().toLowerCase()
-          if (imageExts.has(ext)) {
-            images.push({ name, handle, ext })
-          }
-        }
+        entries.push({ name, handle })
       }
+      const images = entries.filter(e => e.handle.kind === 'file').map(({ name, handle }) => {
+        const ext = name.split('.').pop().toLowerCase()
+        return { name, handle, ext }
+      }).filter(i => imageExts.has(i.ext))
       images.sort((a, b) => a.name.localeCompare(b.name))
       dirImageMap.push({ dir, images })
       totalImages += images.length
@@ -992,19 +1025,20 @@ function RenameSubdirs() {
     let done = 0
     let errors = 0
     for (const { dir, images } of dirImageMap) {
-      for (let i = 0; i < images.length; i++) {
-        const img = images[i]
+      const renameOne = async (img, i) => {
         try {
           const newName = getNewName(dir.name, startNum + i, img.ext)
           await img.handle.move(newName)
         } catch {
           errors++
         }
-        done++
-        if (done % RENAME_BATCH === 0 || done === totalImages) {
-          setProgress({ current: done, total: totalImages })
-          setStatus(`Đang đổi ${done}/${totalImages} ảnh...`)
-        }
+      }
+      for (let i = 0; i < images.length; i += RENAME_CONCURRENCY) {
+        const batch = images.slice(i, i + RENAME_CONCURRENCY)
+        await Promise.all(batch.map((img, j) => renameOne(img, i + j)))
+        done = Math.min(done + batch.length, totalImages)
+        setProgress({ current: done, total: totalImages })
+        setStatus(`Đang đổi ${done}/${totalImages} ảnh...`)
       }
     }
 

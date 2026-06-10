@@ -235,9 +235,11 @@ function ContainerManagement() {
   const checkFolderForContainer = async (handle, containerNo) => {
     if (!handle || !containerNo) return false
     try {
+      const entries = []
       for await (const entry of handle.values()) {
-        if (entry.kind === 'directory' && entry.name.includes(containerNo)) return true
+        entries.push(entry)
       }
+      return entries.some(e => e.kind === 'directory' && e.name.includes(containerNo))
     } catch {}
     return false
   }
@@ -275,6 +277,8 @@ function ContainerManagement() {
     }
   }
 
+  const SCAN_CONCURRENCY = 10
+
   const scanFolders = async () => {
     if (!folderInHandlesRef.current.length && !folderSCHandlesRef.current.length) {
       message.warning('Chưa chọn folder để quét')
@@ -282,7 +286,7 @@ function ContainerManagement() {
     }
     const hide = message.loading('Đang quét folder...', 0)
     let updated = 0
-    for (const item of data) {
+    const checkOne = async (item) => {
       const inMatch = folderInHandlesRef.current.length ? (await Promise.all(folderInHandlesRef.current.map(h => checkFolderForContainer(h, item.containerNo)))).some(Boolean) : false
       const scMatch = folderSCHandlesRef.current.length ? (await Promise.all(folderSCHandlesRef.current.map(h => checkFolderForContainer(h, item.containerNo)))).some(Boolean) : false
       const updates = {}
@@ -291,9 +295,15 @@ function ContainerManagement() {
       if (Object.keys(updates).length) {
         try {
           await api.put(`/containers/${item._id}`, updates)
-          updated++
+          return 1
         } catch {}
       }
+      return 0
+    }
+    for (let i = 0; i < data.length; i += SCAN_CONCURRENCY) {
+      const batch = data.slice(i, i + SCAN_CONCURRENCY)
+      const results = await Promise.all(batch.map(checkOne))
+      updated += results.reduce((s, v) => s + v, 0)
     }
     hide()
     if (updated) fetchData()
@@ -302,17 +312,27 @@ function ContainerManagement() {
 
   const readImagesFromFolder = async (handles, containerNo) => {
     const exts = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
-    const urls = []
+    const readTasks = []
     for (const handle of handles) {
       try {
+        const entries = []
         for await (const entry of handle.values()) {
+          entries.push(entry)
+        }
+        for (const entry of entries) {
           if (entry.kind === 'directory' && entry.name.includes(containerNo)) {
+            const fileEntries = []
             for await (const fileEntry of entry.values()) {
-              if (fileEntry.kind === 'file') {
-                const name = fileEntry.name.toLowerCase()
+              fileEntries.push(fileEntry)
+            }
+            for (const fe of fileEntries) {
+              if (fe.kind === 'file') {
+                const name = fe.name.toLowerCase()
                 if (exts.some(ext => name.endsWith(ext))) {
-                  const file = await fileEntry.getFile()
-                  urls.push(URL.createObjectURL(file))
+                  readTasks.push((async () => {
+                    const file = await fe.getFile()
+                    return URL.createObjectURL(file)
+                  })())
                 }
               }
             }
@@ -320,7 +340,8 @@ function ContainerManagement() {
         }
       } catch {}
     }
-    return urls
+    const results = await Promise.all(readTasks)
+    return results
   }
 
   const handleOpenImages = async (record, type) => {
