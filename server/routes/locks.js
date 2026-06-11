@@ -98,12 +98,19 @@ router.put('/:id/items/:itemId', authMiddleware, async (req, res) => {
 // DELETE /api/locks/:id/items/:itemId — remove one item
 router.delete('/:id/items/:itemId', authMiddleware, async (req, res) => {
   try {
-    const lock = await ProductionLock.findByIdAndUpdate(
-      req.params.id,
-      { $pull: { items: { _id: req.params.itemId } } },
-      { new: true }
-    )
+    const lock = await ProductionLock.findById(req.params.id)
     if (!lock) return res.status(404).json({ message: 'Không tìm thấy' })
+    const item = lock.items.id(req.params.itemId)
+    if (!item) return res.status(404).json({ message: 'Không tìm thấy item' })
+    const { containerNo } = item
+    lock.items.pull(req.params.itemId)
+    await lock.save()
+    if (containerNo) {
+      const stillExists = await ProductionLock.findOne({ 'items.containerNo': containerNo })
+      if (!stillExists) {
+        await Container.updateMany({ containerNo }, { $set: { locked: false } })
+      }
+    }
     res.json(lock)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -113,8 +120,16 @@ router.delete('/:id/items/:itemId', authMiddleware, async (req, res) => {
 // DELETE /api/locks/:id — delete entire lock
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
-    const lock = await ProductionLock.findByIdAndDelete(req.params.id)
+    const lock = await ProductionLock.findById(req.params.id)
     if (!lock) return res.status(404).json({ message: 'Không tìm thấy' })
+    const containerNos = [...new Set(lock.items.map(i => i.containerNo))]
+    await ProductionLock.findByIdAndDelete(req.params.id)
+    for (const containerNo of containerNos) {
+      const stillExists = await ProductionLock.findOne({ 'items.containerNo': containerNo })
+      if (!stillExists) {
+        await Container.updateMany({ containerNo }, { $set: { locked: false } })
+      }
+    }
     res.json({ message: 'Đã xóa' })
   } catch (err) {
     res.status(500).json({ message: err.message })

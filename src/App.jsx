@@ -1,7 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
@@ -10,7 +10,7 @@ const ImageCheck = lazy(() => import('./pages/ImageCheck'))
 const { Dragger } = Upload
 const { Title, Text } = Typography
 
-const { Header, Content } = Layout
+const { Sider, Content } = Layout
 
 const COPY_CONCURRENCY = 10
 
@@ -41,7 +41,9 @@ async function copyDirectoryContents(srcDirHandle, destDirHandle) {
 }
 
 function App() {
+  const [collapsed, setCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('excel')
+  const [openKeys, setOpenKeys] = useState(['containers-group'])
   const [user, setUser] = useState(() => {
     try {
       const stored = localStorage.getItem('user')
@@ -76,17 +78,42 @@ function App() {
     setActiveTab('excel')
   }
 
+  const containerGroupKey = 'containers-group'
+
   const tabItems = [
-    { key: 'excel', label: <span style={{ color: activeTab === 'excel' ? tabColors.excel : undefined }}><FileExcelOutlined style={{ color: tabColors.excel }} /> Excel File Matcher</span> },
-    { key: 'dedup', label: <span style={{ color: activeTab === 'dedup' ? tabColors.dedup : undefined }}><DeleteOutlined style={{ color: tabColors.dedup }} /> Xóa trùng Excel</span> },
-    { key: 'compress', label: <span style={{ color: activeTab === 'compress' ? tabColors.compress : undefined }}><CompressOutlined style={{ color: tabColors.compress }} /> Giảm size hình</span> },
-    { key: 'rename', label: <span style={{ color: activeTab === 'rename' ? tabColors.rename : undefined }}><FolderOpenOutlined style={{ color: tabColors.rename }} /> Đổi tên thư mục</span> },
-    { key: 'todo', label: <span style={{ color: activeTab === 'todo' ? tabColors.todo : undefined }}><CheckSquareOutlined style={{ color: tabColors.todo }} /> Todo List</span> },
-    { key: 'dashboard', label: <span style={{ color: activeTab === 'dashboard' ? tabColors.dashboard : undefined }}><DashboardOutlined style={{ color: tabColors.dashboard }} /> Dashboard</span> },
-    { key: 'containers', label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}><ContainerOutlined style={{ color: tabColors.containers }} /> Containers</span> },
-    { key: 'sanluong', label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}><LockOutlined style={{ color: tabColors.sanluong }} /> Sản lượng</span> },
-    { key: 'imagecheck', label: <span style={{ color: activeTab === 'imagecheck' ? tabColors.imagecheck : undefined }}><FileImageOutlined style={{ color: tabColors.imagecheck }} /> Check Hình</span> },
+    { key: 'excel', icon: <FileExcelOutlined style={{ color: tabColors.excel }} />, label: <span style={{ color: activeTab === 'excel' ? tabColors.excel : undefined }}>Excel File Matcher</span> },
+    { key: 'dedup', icon: <DeleteOutlined style={{ color: tabColors.dedup }} />, label: <span style={{ color: activeTab === 'dedup' ? tabColors.dedup : undefined }}>Xóa trùng Excel</span> },
+    { key: 'compress', icon: <CompressOutlined style={{ color: tabColors.compress }} />, label: <span style={{ color: activeTab === 'compress' ? tabColors.compress : undefined }}>Giảm size hình</span> },
+    { key: 'rename', icon: <FolderOpenOutlined style={{ color: tabColors.rename }} />, label: <span style={{ color: activeTab === 'rename' ? tabColors.rename : undefined }}>Đổi tên thư mục</span> },
+    { key: 'todo', icon: <CheckSquareOutlined style={{ color: tabColors.todo }} />, label: <span style={{ color: activeTab === 'todo' ? tabColors.todo : undefined }}>Todo List</span> },
+    
+    { key: 'imagecheck', icon: <FileImageOutlined style={{ color: tabColors.imagecheck }} />, label: <span style={{ color: activeTab === 'imagecheck' ? tabColors.imagecheck : undefined }}>Check Hình</span> },
+{
+      key: containerGroupKey,
+      icon: <ContainerOutlined style={{ color: tabColors.containers }} />,
+      label: <span>DS CONTAINER</span>,
+      children: [
+        { key: 'dashboard', icon: <DashboardOutlined style={{ color: tabColors.dashboard }} />, label: <span style={{ color: activeTab === 'dashboard' ? tabColors.dashboard : undefined }}>Dashboard</span> },
+        { key: 'containers', icon: <ContainerOutlined style={{ color: tabColors.containers }} />, label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}>Containers</span> },
+        { key: 'sanluong', icon: <LockOutlined style={{ color: tabColors.sanluong }} />, label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}>Sản lượng</span> },
+      ]
+    },  
   ]
+
+  const sidebarItems = tabItems.map(item => ({
+    ...item,
+    label: <span className="text-sm">{item.label}</span>,
+    children: item.children?.map(child => ({
+      ...child,
+      label: <span className="text-sm">{child.label}</span>,
+    })),
+  }))
+
+  const customTrigger = (
+    <div className="sider-trigger">
+      {collapsed ? <MenuUnfoldOutlined style={{ fontSize: 18 }} /> : <MenuFoldOutlined style={{ fontSize: 18 }} />}
+    </div>
+  )
 
   return (
     <ConfigProvider
@@ -96,52 +123,80 @@ function App() {
           Layout: {
             headerBg: '#ffffff',
             bodyBg: '#f5f5f5',
+            siderBg: '#ffffff',
             headerHeight: 64,
           },
         },
       }}
     >
       <Layout className="min-h-screen">
-        <Header className="flex items-center px-4 md:px-6 shadow-sm border-b border-gray-200 sticky top-0 z-10" style={{ height: 64, lineHeight: '64px', padding: '0 24px', background: '#ffffff' }}>
-          <div className="flex items-center gap-3 mr-6 md:mr-10">
-            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-sm">
+        <Sider
+          collapsible
+          collapsed={collapsed}
+          onCollapse={setCollapsed}
+          trigger={customTrigger}
+          theme="light"
+          width={240}
+          collapsedWidth={64}
+          className="border-r border-gray-200 shadow-sm"
+          style={{ position: 'sticky', top: 0, height: '100vh' }}
+        >
+          <div className={`sider-logo ${collapsed ? 'sider-logo-collapsed' : ''}`}>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-sm shrink-0">
               <FileExcelOutlined className="text-white" style={{ fontSize: 18 }} />
             </div>
-            <Title level={4} className="m-0 text-gray-800 whitespace-nowrap" style={{ margin: 0, letterSpacing: '-0.3px' }}>File Tools</Title>
-          </div>
-          <div className="flex-1 flex items-center h-full">
-            <Menu
-              mode="horizontal"
-              selectedKeys={[activeTab]}
-              onClick={({ key }) => setActiveTab(key)}
-              items={tabItems}
-              className="flex-1 min-w-0 border-0 h-full"
-              style={{ lineHeight: '64px', background: 'transparent', borderBottom: 'none' }}
-            />
-          </div>
-          <div className="flex items-center gap-2 ml-4 shrink-0">
-            {user ? (
-              <Tag icon={<UserOutlined />} color="blue">{user.username} ({user.role})</Tag>
-            ) : (
-              <Button type="primary" size="small" onClick={() => setActiveTab('dashboard')}>Đăng nhập</Button>
+            {!collapsed && (
+              <Title level={4} className="m-0 text-gray-800 whitespace-nowrap" style={{ margin: 0, letterSpacing: '-0.3px', fontSize: 16 }}>
+                File Tools
+              </Title>
             )}
-            {user && <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} size="small" />}
           </div>
-        </Header>
-        <Content className="p-4 md:p-6 overflow-auto" style={{ background: '#f5f5f5', minHeight: 'calc(100vh - 56px)' }}>
-          {activeTab === 'excel' && <ExcelMatcher />}
-          {activeTab === 'dedup' && <ExcelDeduplicator />}
-          {activeTab === 'compress' && <ImageCompressor />}
-          {activeTab === 'rename' && <RenameSubdirs />}
-          {(activeTab === 'todo' || activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
-            <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
-          )}
-          {activeTab === 'imagecheck' && (
-            <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
-              <ImageCheck />
-            </Suspense>
-          )}
-        </Content>
+          <Menu
+            mode="inline"
+            selectedKeys={[activeTab]}
+            openKeys={openKeys}
+            onOpenChange={setOpenKeys}
+            onClick={({ key }) => {
+              if (key !== containerGroupKey) {
+                setActiveTab(key)
+                setOpenKeys([])
+              }
+            }}
+            items={sidebarItems}
+            className="border-0"
+            style={{ background: 'transparent' }}
+          />
+          <div className={`sider-user ${collapsed ? 'sider-user-collapsed' : ''}`}>
+            {user ? (
+              collapsed ? (
+                <Tag icon={<UserOutlined />} color="blue" className="m-0" />
+              ) : (
+                <Tag icon={<UserOutlined />} color="blue">{user.username} ({user.role})</Tag>
+              )
+            ) : (
+              <Button type="primary" size="small" onClick={() => setActiveTab('dashboard')} className="w-full">
+                {collapsed ? <UserOutlined /> : 'Đăng nhập'}
+              </Button>
+            )}
+            {user && <Button type="text" icon={<LogoutOutlined />} onClick={handleLogout} size="small" className="shrink-0" />}
+          </div>
+        </Sider>
+        <Layout>
+          <Content className="p-4 md:p-6 overflow-auto" style={{ background: '#f5f5f5', minHeight: '100vh' }}>
+            {activeTab === 'excel' && <ExcelMatcher />}
+            {activeTab === 'dedup' && <ExcelDeduplicator />}
+            {activeTab === 'compress' && <ImageCompressor />}
+            {activeTab === 'rename' && <RenameSubdirs />}
+            {(activeTab === 'todo' || activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
+              <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
+            )}
+            {activeTab === 'imagecheck' && (
+              <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+                <ImageCheck />
+              </Suspense>
+            )}
+          </Content>
+        </Layout>
       </Layout>
     </ConfigProvider>
   )
