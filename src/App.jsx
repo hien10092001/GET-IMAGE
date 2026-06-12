@@ -1,7 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, CheckSquareOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
@@ -62,7 +62,6 @@ function App() {
     dedup: '#e84315',
     compress: '#0ea042',
     rename: '#e67e22',
-    todo: '#13c2c2',
     dashboard: '#722ed1',
     containers: '#eb2f96',
     sanluong: '#13c2c2',
@@ -85,7 +84,6 @@ function App() {
     { key: 'dedup', icon: <DeleteOutlined style={{ color: tabColors.dedup }} />, label: <span style={{ color: activeTab === 'dedup' ? tabColors.dedup : undefined }}>Xóa trùng Excel</span> },
     { key: 'compress', icon: <CompressOutlined style={{ color: tabColors.compress }} />, label: <span style={{ color: activeTab === 'compress' ? tabColors.compress : undefined }}>Giảm size hình</span> },
     { key: 'rename', icon: <FolderOpenOutlined style={{ color: tabColors.rename }} />, label: <span style={{ color: activeTab === 'rename' ? tabColors.rename : undefined }}>Đổi tên thư mục</span> },
-    { key: 'todo', icon: <CheckSquareOutlined style={{ color: tabColors.todo }} />, label: <span style={{ color: activeTab === 'todo' ? tabColors.todo : undefined }}>Todo List</span> },
     
     { key: 'imagecheck', icon: <FileImageOutlined style={{ color: tabColors.imagecheck }} />, label: <span style={{ color: activeTab === 'imagecheck' ? tabColors.imagecheck : undefined }}>Check Hình</span> },
 {
@@ -187,7 +185,7 @@ function App() {
             {activeTab === 'dedup' && <ExcelDeduplicator />}
             {activeTab === 'compress' && <ImageCompressor />}
             {activeTab === 'rename' && <RenameSubdirs />}
-            {(activeTab === 'todo' || activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
+            {(activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
             {activeTab === 'imagecheck' && (
