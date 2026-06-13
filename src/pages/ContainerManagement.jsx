@@ -145,7 +145,18 @@ function ContainerManagement() {
   }
 
   const fetchFrequencies = () => {
-    api.get('/containers/frequencies').then(res => {
+    const params = {}
+    if (search) params.search = search
+    if (filters.shippingLine) params.shippingLine = filters.shippingLine
+    if (filters.size) params.size = filters.size
+    if (filters.location) params.location = filters.location
+    if (filters.remark) params.remark = filters.remark
+    if (filters.locked) params.locked = filters.locked
+    if (dateRange && dateRange[0] && dateRange[1]) {
+      params.dateFrom = dateRange[0].format('YYYY-MM-DD')
+      params.dateTo = dateRange[1].format('YYYY-MM-DD')
+    }
+    api.get('/containers/frequencies', { params }).then(res => {
       setFrequencies(res.data)
     }).catch(() => {})
   }
@@ -158,7 +169,7 @@ function ContainerManagement() {
     fetchData()
     fetchFrequencies()
     fetchLocationHistory()
-  }, [page, pageSize, search, filters])
+  }, [page, pageSize, search, filters, dateRange])
 
   const openEdit = (record) => {
     setEditing(record)
@@ -685,7 +696,14 @@ function ContainerManagement() {
   const columns = [
     { title: 'STT', key: 'stt', width: 60, render: (_, __, i) => (page - 1) * pageSize + i + 1 },
     { title: 'SL', key: 'count', width: 60, align: 'center', render: (_, r) => containerFreq[r.containerNo] > 1 ? <Tag color="red">{containerFreq[r.containerNo]}</Tag> : containerFreq[r.containerNo] },
-    { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo',width: 120, sorter: true },
+    { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo',width: 120, sorter: true,
+      render: (v, r) => (
+        <Space size={4}>
+          {r._source === 'lock' && <Tag color="orange" style={{ margin: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>SL</Tag>}
+          <span>{v}</span>
+        </Space>
+      ),
+    },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 80, sorter: true },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 60, sorter: true },
     { title: 'GRADE', dataIndex: 'location', key: 'location', width: 100 },
@@ -724,15 +742,24 @@ function ContainerManagement() {
     },
     {
       title: 'Hành động', key: 'action', width: 130, fixed: 'right',
-      render: (_, record) => (
-        <Space>
-          <Tooltip title="Xem"><Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openView(record)} /></Tooltip>
-          <Tooltip title="Sửa"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)} /></Tooltip>
-          <Popconfirm title="Xóa container này?" onConfirm={() => handleDelete(record._id)} okText="Xóa" cancelText="Hủy">
-            <Tooltip title="Xóa"><Button type="text" danger size="small" icon={<DeleteOutlined />} /></Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_, record) => {
+        if (record._source === 'lock') {
+          return (
+            <Tooltip title={`Sản lượng: ${record.lockDate} ${record.lockShift || ''}`}>
+              <Tag color="orange" style={{ cursor: 'pointer' }}>SL</Tag>
+            </Tooltip>
+          )
+        }
+        return (
+          <Space>
+            <Tooltip title="Xem"><Button type="text" size="small" icon={<EyeOutlined />} onClick={() => openView(record)} /></Tooltip>
+            <Tooltip title="Sửa"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)} /></Tooltip>
+            <Popconfirm title="Xóa container này?" onConfirm={() => handleDelete(record._id)} okText="Xóa" cancelText="Hủy">
+              <Tooltip title="Xóa"><Button type="text" danger size="small" icon={<DeleteOutlined />} /></Tooltip>
+            </Popconfirm>
+          </Space>
+        )
+      },
     },
   ]
 

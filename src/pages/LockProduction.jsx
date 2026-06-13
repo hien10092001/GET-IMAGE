@@ -41,7 +41,7 @@ function LockProduction() {
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState('')
   const searchTimerRef = useRef(null)
-  const [filterDateRange, setFilterDateRange] = useState([dayjs(), dayjs()])
+  const [filterDateRange, setFilterDateRange] = useState(null)
   const [filterShift, setFilterShift] = useState('')
   const [filterShippingLine, setFilterShippingLine] = useState('')
   const [filterSize, setFilterSize] = useState('')

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import Container from '../models/Container.js'
 import ShippingList from '../models/ShippingList.js'
+import ProductionLock from '../models/ProductionLock.js'
 import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
@@ -44,8 +45,6 @@ router.get('/', authMiddleware, async (req, res) => {
         { shippingLine: { $regex: search, $options: 'i' } },
         { location: { $regex: search, $options: 'i' } },
       ]
-    } else if (locked === undefined || locked === '') {
-      query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
@@ -99,13 +98,57 @@ router.get('/', authMiddleware, async (req, res) => {
     const data = containers.map(c => ({
       ...c,
       shippingLists: containerListMap[c.containerNo] || [],
+      _source: 'container',
     }))
 
+    // When search is present, also include matching items from production locks
+    let allData = data
+    let finalTotal = total
+    if (search) {
+      const itemsMatch = {
+        $or: [
+          { 'items.containerNo': { $regex: search, $options: 'i' } },
+          { 'items.shippingLine': { $regex: search, $options: 'i' } },
+          { 'items.location': { $regex: search, $options: 'i' } },
+        ],
+      }
+      const lockDocs = await ProductionLock.aggregate([
+        { $match: itemsMatch },
+        { $unwind: '$items' },
+        { $match: itemsMatch },
+        {
+          $project: {
+            _id: { $toString: '$items._id' },
+            containerNo: '$items.containerNo',
+            shippingLine: '$items.shippingLine',
+            size: '$items.size',
+            location: '$items.location',
+            remark: '$items.remark',
+            bay: '$items.bay',
+            locked: { $literal: true },
+            lockDate: '$date',
+            lockShift: '$shift',
+            _source: { $literal: 'lock' },
+            createdAt: { $toDate: '$date' },
+          },
+        },
+        { $sort: { lockDate: -1 } },
+      ]).catch(() => [])
+
+      const lockItems = lockDocs.map(item => ({
+        ...item,
+        shippingLists: [],
+      }))
+
+      allData = [...data, ...lockItems]
+      finalTotal = total + lockItems.length
+    }
+
     res.json({
-      data,
-      total,
+      data: allData,
+      total: finalTotal,
       page: parseInt(page),
-      totalPages: Math.ceil(total / parseInt(limit)),
+      totalPages: Math.ceil(finalTotal / parseInt(limit)),
     })
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -121,8 +164,6 @@ router.get('/all', authMiddleware, async (req, res) => {
         { containerNo: { $regex: search, $options: 'i' } },
         { shippingLine: { $regex: search, $options: 'i' } },
       ]
-    } else if (locked === undefined || locked === '') {
-      query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
@@ -171,13 +212,39 @@ router.get('/all', authMiddleware, async (req, res) => {
   }
 })
 
-// GET /api/containers/frequencies — count per containerNo across ALL containers
+// GET /api/containers/frequencies — count per containerNo, optionally filtered
 router.get('/frequencies', authMiddleware, async (req, res) => {
   try {
-    const result = await Container.aggregate([
-      { $group: { _id: '$containerNo', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-    ])
+    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked } = req.query
+    const match = {}
+
+    if (search) {
+      match.$or = [
+        { containerNo: { $regex: search, $options: 'i' } },
+        { shippingLine: { $regex: search, $options: 'i' } },
+        { location: { $regex: search, $options: 'i' } },
+      ]
+    }
+    if (shippingLine) match.shippingLine = shippingLine
+    if (size) match.size = size
+    if (location) match.location = { $regex: location, $options: 'i' }
+    if (remark) match.remark = { $regex: remark, $options: 'i' }
+    if (locked === 'true') match.locked = true
+    else if (locked === 'false') match.locked = false
+    if (dateFrom || dateTo) {
+      match.createdAt = {}
+      if (dateFrom) match.createdAt.$gte = new Date(dateFrom)
+      if (dateTo) {
+        const end = new Date(dateTo)
+        end.setDate(end.getDate() + 1)
+        match.createdAt.$lte = end
+      }
+    }
+
+    const pipeline = Object.keys(match).length ? [{ $match: match }, { $group: { _id: '$containerNo', count: { $sum: 1 } } }] : [{ $group: { _id: '$containerNo', count: { $sum: 1 } } }]
+    pipeline.push({ $sort: { count: -1 } })
+
+    const result = await Container.aggregate(pipeline)
     const map = {}
     result.forEach(r => { map[r._id] = r.count })
     res.json(map)
