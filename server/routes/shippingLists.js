@@ -98,14 +98,25 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     const itemsWithStatus = list.items.map(i => {
       const info = lockInfo[i.containerNo]
+      if (info) {
+        return {
+          ...i,
+          locked: info.locked,
+          dsc: info.dsc,
+          choHtxnDvs: info.choHtxnDvs,
+          sc: info.sc,
+          vsDvs: info.vsDvs,
+          xuLiLai: info.xuLiLai,
+        }
+      }
       return {
         ...i,
-        locked: info ? info.locked : false,
-        dsc: i.dsc || (info ? info.dsc : ''),
-        choHtxnDvs: i.choHtxnDvs || (info ? info.choHtxnDvs : ''),
-        sc: i.sc || (info ? info.sc : ''),
-        vsDvs: i.vsDvs || (info ? info.vsDvs : ''),
-        xuLiLai: i.xuLiLai || (info ? info.xuLiLai : ''),
+        locked: false,
+        dsc: i.dsc,
+        choHtxnDvs: i.choHtxnDvs,
+        sc: i.sc,
+        vsDvs: i.vsDvs,
+        xuLiLai: i.xuLiLai,
       }
     })
 

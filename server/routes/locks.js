@@ -26,7 +26,7 @@ async function updateShippingListFromLock(items, lockDate) {
         listItem.vsDvs = appendDate(listItem.vsDvs, lockDate)
       } else if (/X[UÚÙỦŨỤỨỪỬỮỰ] L[IÍÌĨỊ] L[AÀÁÃẠ]I/.test(remark)) {
         listItem.xuLiLai = appendDate(listItem.xuLiLai, lockDate)
-      } else {
+      } else if (/\bDSC\b/.test(remark) || /CHO\s+HTXN/.test(remark) || /\bDVS\b/.test(remark) || /\bSC\b/.test(remark)) {
         listItem.dsc = appendDate(listItem.dsc, lockDate)
         listItem.choHtxnDvs = appendDate(listItem.choHtxnDvs, lockDate)
         listItem.sc = appendDate(listItem.sc, lockDate)
