@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -67,6 +67,61 @@ function LockProduction() {
   const [slSelectedRowKeys, setSlSelectedRowKeys] = useState([])
   const [slDateRange, setSlDateRange] = useState(null)
   const [slDetailDateRange, setSlDetailDateRange] = useState(null)
+  const [selectedExportFields, setSelectedExportFields] = useState({
+    containerNo: true,
+    shippingLine: false,
+    size: false,
+    location: true,
+    remark: true,
+    bay: false,
+    createdAt: false,
+    dscGroup: false,
+    xuLiLai: false,
+    vsDvs: false,
+    shippingLists: false,
+  })
+
+  const exportFieldLabels = {
+    containerNo: 'Container No',
+    shippingLine: 'Hãng tàu',
+    size: 'Size',
+    location: 'Phân Loại',
+    remark: 'Ghi chú',
+    bay: 'Bay',
+    createdAt: 'Ngày tạo',
+    dscGroup: 'Đã sửa chữa',
+    xuLiLai: 'Xử lý lại',
+    vsDvs: 'Vệ sinh',
+    shippingLists: 'List tàu',
+  }
+
+  const getActiveExportFields = () =>
+    Object.entries(selectedExportFields).filter(([, v]) => v).map(([k]) => exportFieldLabels[k])
+
+  const getShippingListNames = (containerNo) => {
+    const names = shippingLists
+      .filter(sl => sl.items?.some(i => i.containerNo === containerNo))
+      .map(sl => sl.name)
+    return names.length ? names.join(', ') : ''
+  }
+
+  const buildExportRow = (item, fields) => {
+    const row = { STT: (item._idx || 0) + 1 }
+    fields.forEach(f => {
+      if (f === 'Container No') row[f] = item.containerNo || ''
+      else if (f === 'Hãng tàu') row[f] = item.shippingLine || ''
+      else if (f === 'Size') row[f] = item.size || ''
+      else if (f === 'Phân Loại') row[f] = item.location || ''
+      else if (f === 'Ghi chú') row[f] = item.remark || ''
+      else if (f === 'Bay') row[f] = item.bay || ''
+      else if (f === 'Ngày tạo') row[f] = item.createdAt ? dayjs(item.createdAt).format('DD/MM/YYYY') : ''
+      else if (f === 'Đã sửa chữa') row[f] = item.dsc || item.choHtxnDvs || item.sc || ''
+      else if (f === 'Xử lý lại') row[f] = item.xuLiLai || ''
+      else if (f === 'Vệ sinh') row[f] = item.vsDvs || ''
+      else if (f === 'List tàu') row[f] = getShippingListNames(item.containerNo)
+    })
+    return row
+  }
 
   const fetchLocks = () => {
     queueMicrotask(() => setLoading(true))
@@ -232,12 +287,15 @@ function LockProduction() {
   }
 
   const copyItemsToClipboard = (items) => {
-    const header = 'Container No\tHãng tàu\tSize\tPhân Loại\tBay\tGhi chú'
-    const rows = items.map(i =>
-      [i.containerNo, i.shippingLine, i.size, i.location || '', i.bay || '', i.remark || ''].join('\t')
-    )
+    const activeFields = getActiveExportFields()
+    if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
+    const header = activeFields.join('\t')
+    const rows = items.map((i, idx) => {
+      const row = buildExportRow({ ...i, _idx: idx }, activeFields)
+      return activeFields.map(f => String(row[f] ?? '')).join('\t')
+    })
     navigator.clipboard.writeText(header + '\n' + rows.join('\n')).then(() => {
-      message.success('Đã copy dữ liệu')
+      message.success(`Đã copy ${rows.length} dòng`)
     }).catch(() => {
       message.error('Lỗi copy')
     })
@@ -297,22 +355,15 @@ function LockProduction() {
 
   const exportLockExcel = () => {
     if (!currentLock) return
-    const rows = currentLock.items.map((c, i) => ({
-      STT: i + 1,
-      'Container No': c.containerNo,
-      'Hãng tàu': c.shippingLine,
-      Size: c.size,
-      'Ngày tạo': dayjs(currentLock.createdAt).format('DD/MM/YYYY'),
-      'Phân Loại': c.location || '',
-      'Ghi chú': c.remark || '',
-      Bay: c.bay || '',
-    }))
+    const activeFields = getActiveExportFields()
+    if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
+    const rows = currentLock.items.map((c, i) =>
+      buildExportRow({ ...c, createdAt: currentLock.createdAt, _idx: i }, activeFields)
+    )
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'SanLuong')
-    ws['!cols'] = [
-      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 18 }, { wch: 20 }, { wch: 30 }, { wch: 10 },
-    ]
+    ws['!cols'] = [{ wch: 5 }, ...activeFields.map(() => ({ wch: 18 }))]
     XLSX.writeFile(wb, `sanluong_${currentLock.date}_${currentLock.shift}.xlsx`)
     message.success('Xuất Excel thành công')
   }
@@ -377,13 +428,20 @@ function LockProduction() {
   const columns = [
     { title: 'STT', key: 'stt', width: 60, render: (_, __, i) => i + 1 },
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo' },
-    { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine' },
-    { title: 'Size', dataIndex: 'size', key: 'size' },
-    { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 120 },
+    { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 100 },
+    { title: 'Size', dataIndex: 'size', key: 'size', width: 80 },
+    { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 100 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
     {
-      title: 'Hành động', key: 'action', width: 100,
+      title: 'List tàu', key: 'shippingLists', width: 180,
+      render: (_, r) => {
+        const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
+        return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+      },
+    },
+    {
+      title: 'Hành động', key: 'action', width: 105,
       render: (_, record) => (
         <Space>
           <Tooltip title="Sửa"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditItem(record)} /></Tooltip>
@@ -416,35 +474,21 @@ function LockProduction() {
   ]
 
   const exportPreviewExcel = () => {
-    const rows = previewItems.map((c, i) => ({
-      STT: i + 1,
-      'Container No': c.containerNo,
-      'Hãng tàu': c.shippingLine,
-      Size: c.size,
-      'Phân Loại': c.location || '',
-      'Ghi chú': c.remark || '',
-      Bay: c.bay || '',
-    }))
+    const activeFields = getActiveExportFields()
+    if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
+    const rows = previewItems.map((c, i) => buildExportRow({ ...c, _idx: i }, activeFields))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Preview')
-    ws['!cols'] = [
-      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 10 },
-    ]
+    ws['!cols'] = [{ wch: 5 }, ...activeFields.map(() => ({ wch: 18 }))]
     XLSX.writeFile(wb, `preview_sanluong_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`)
     message.success('Xuất Excel thành công')
   }
 
   const exportSlExcel = (items, name) => {
-    const rows = items.map((c, i) => ({
-      STT: i + 1,
-      'Container No': c.containerNo,
-      'Hãng tàu': c.shippingLine,
-      Size: c.size,
-      'Đã sửa chữa': c.dsc || c.choHtxnDvs || c.sc || '',
-      'Xử lý lại': c.xuLiLai || '',
-      'Vệ sinh': c.vsDvs || '',
-    }))
+    const activeFields = getActiveExportFields()
+    if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
+    const rows = items.map((c, i) => buildExportRow({ ...c, _idx: i }, activeFields))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'DSContainer')
@@ -473,6 +517,13 @@ function LockProduction() {
     { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 120 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
+    {
+      title: 'List tàu', key: 'shippingLists', width: 180,
+      render: (_, r) => {
+        const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
+        return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+      },
+    },
     {
       title: 'DA SUA CHUA', key: 'dscGroup', width: 160,
       render: (_, r) => renderMultiTag(r.dsc || r.choHtxnDvs || r.sc, 'green'),
@@ -701,6 +752,25 @@ function LockProduction() {
                 }}>
                   Thêm container
                 </Button>
+                <Popover
+                  trigger="click"
+                  title="Chọn cột xuất"
+                  content={
+                    <Space direction="vertical" style={{ minWidth: 160 }}>
+                      {Object.entries(exportFieldLabels).map(([key, label]) => (
+                        <Checkbox
+                          key={key}
+                          checked={selectedExportFields[key]}
+                          onChange={e => setSelectedExportFields(p => ({ ...p, [key]: e.target.checked }))}
+                        >
+                          {label}
+                        </Checkbox>
+                      ))}
+                    </Space>
+                  }
+                >
+                  <Button icon={<FilterOutlined />}>Chọn cột</Button>
+                </Popover>
                 <Button type="primary" icon={<ExportOutlined />} style={{ background: '#52c41a', borderColor: '#52c41a' }} onClick={exportLockExcel}>
                   Xuất Excel
                 </Button>
@@ -832,6 +902,25 @@ function LockProduction() {
             <Button type="primary" icon={<CheckCircleOutlined />} onClick={handleSavePreview} loading={submitting} style={{ background: '#52c41a', borderColor: '#52c41a' }}>
               Lưu dữ liệu
             </Button>
+            <Popover
+              trigger="click"
+              title="Chọn cột xuất"
+              content={
+                <Space direction="vertical" style={{ minWidth: 160 }}>
+                  {Object.entries(exportFieldLabels).map(([key, label]) => (
+                    <Checkbox
+                      key={key}
+                      checked={selectedExportFields[key]}
+                      onChange={e => setSelectedExportFields(p => ({ ...p, [key]: e.target.checked }))}
+                    >
+                      {label}
+                    </Checkbox>
+                  ))}
+                </Space>
+              }
+            >
+              <Button icon={<FilterOutlined />}>Chọn cột</Button>
+            </Popover>
             <Button icon={<ExportOutlined />} onClick={exportPreviewExcel}>
               Xuất Excel
             </Button>
@@ -1015,6 +1104,13 @@ function LockProduction() {
                 { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 130 },
                 { title: 'Size', dataIndex: 'size', key: 'size', width: 70 },
                 {
+                  title: 'List tàu', key: 'shippingLists', width: 180,
+                  render: (_, r) => {
+                    const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
+                    return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+                  },
+                },
+                {
                   title: 'DA SUA CHUA', key: 'dscGroup', width: 150,
                   render: (_, r) => renderMultiTag(r.dsc || r.choHtxnDvs || r.sc, 'green'),
                 },
@@ -1105,6 +1201,25 @@ function LockProduction() {
                     />
                   </Space>
                   <Space>
+                    <Popover
+                      trigger="click"
+                      title="Chọn cột xuất"
+                      content={
+                        <Space direction="vertical" style={{ minWidth: 160 }}>
+                          {Object.entries(exportFieldLabels).map(([key, label]) => (
+                            <Checkbox
+                              key={key}
+                              checked={selectedExportFields[key]}
+                              onChange={e => setSelectedExportFields(p => ({ ...p, [key]: e.target.checked }))}
+                            >
+                              {label}
+                            </Checkbox>
+                          ))}
+                        </Space>
+                      }
+                    >
+                      <Button icon={<FilterOutlined />}>Chọn cột</Button>
+                    </Popover>
                     <Button icon={<ExportOutlined />} onClick={() => exportSlExcel(
                       slSelectedRowKeys.length ? items.filter(i => slSelectedRowKeys.includes(i._id)) : filtered,
                       detailSl.name

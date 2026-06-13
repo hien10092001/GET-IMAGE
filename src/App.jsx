@@ -1,7 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, DashboardOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
@@ -62,7 +62,6 @@ function App() {
     dedup: '#e84315',
     compress: '#0ea042',
     rename: '#e67e22',
-    dashboard: '#722ed1',
     containers: '#eb2f96',
     sanluong: '#13c2c2',
     imagecheck: '#fa8c16',
@@ -91,7 +90,6 @@ function App() {
       icon: <ContainerOutlined style={{ color: tabColors.containers }} />,
       label: <span>DS CONTAINER</span>,
       children: [
-        { key: 'dashboard', icon: <DashboardOutlined style={{ color: tabColors.dashboard }} />, label: <span style={{ color: activeTab === 'dashboard' ? tabColors.dashboard : undefined }}>Dashboard</span> },
         { key: 'containers', icon: <ContainerOutlined style={{ color: tabColors.containers }} />, label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}>Containers</span> },
         { key: 'sanluong', icon: <LockOutlined style={{ color: tabColors.sanluong }} />, label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}>Sản lượng</span> },
       ]
@@ -172,7 +170,7 @@ function App() {
                 <Tag icon={<UserOutlined />} color="blue">{user.username} ({user.role})</Tag>
               )
             ) : (
-              <Button type="primary" size="small" onClick={() => setActiveTab('dashboard')} className="w-full">
+              <Button type="primary" size="small" onClick={() => setActiveTab('containers')} className="w-full">
                 {collapsed ? <UserOutlined /> : 'Đăng nhập'}
               </Button>
             )}
@@ -185,7 +183,7 @@ function App() {
             {activeTab === 'dedup' && <ExcelDeduplicator />}
             {activeTab === 'compress' && <ImageCompressor />}
             {activeTab === 'rename' && <RenameSubdirs />}
-            {(activeTab === 'dashboard' || activeTab === 'containers' || activeTab === 'sanluong') && (
+            {(activeTab === 'containers' || activeTab === 'sanluong') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
             {activeTab === 'imagecheck' && (

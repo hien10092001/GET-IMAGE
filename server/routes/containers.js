@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import Container from '../models/Container.js'
+import ShippingList from '../models/ShippingList.js'
 import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
@@ -71,12 +72,37 @@ router.get('/', authMiddleware, async (req, res) => {
     }
 
     const [containers, total] = await Promise.all([
-      Container.find(query).sort(sortObj).skip(skip).limit(parseInt(limit)),
+      Container.find(query).sort(sortObj).skip(skip).limit(parseInt(limit)).lean(),
       Container.countDocuments(query),
     ])
 
+    const containerNos = containers.map(c => c.containerNo)
+    const shippingLists = containerNos.length
+      ? await ShippingList.find(
+          { 'items.containerNo': { $in: containerNos } },
+          { name: 1, 'items.containerNo': 1 }
+        ).lean()
+      : []
+
+    const containerListMap = {}
+    shippingLists.forEach(sl => {
+      sl.items.forEach(item => {
+        if (!containerListMap[item.containerNo]) {
+          containerListMap[item.containerNo] = []
+        }
+        if (!containerListMap[item.containerNo].some(l => l._id.equals(sl._id))) {
+          containerListMap[item.containerNo].push({ _id: sl._id, name: sl.name })
+        }
+      })
+    })
+
+    const data = containers.map(c => ({
+      ...c,
+      shippingLists: containerListMap[c.containerNo] || [],
+    }))
+
     res.json({
-      data: containers,
+      data,
       total,
       page: parseInt(page),
       totalPages: Math.ceil(total / parseInt(limit)),
@@ -113,8 +139,33 @@ router.get('/all', authMiddleware, async (req, res) => {
         query.createdAt.$lt = end
       }
     }
-    const containers = await Container.find(query).sort({ createdAt: -1 })
-    res.json(containers)
+    const containers = await Container.find(query).sort({ createdAt: -1 }).lean()
+
+    const containerNos = containers.map(c => c.containerNo)
+    const shippingLists = containerNos.length
+      ? await ShippingList.find(
+          { 'items.containerNo': { $in: containerNos } },
+          { name: 1, 'items.containerNo': 1 }
+        ).lean()
+      : []
+
+    const containerListMap = {}
+    shippingLists.forEach(sl => {
+      sl.items.forEach(item => {
+        if (!containerListMap[item.containerNo]) {
+          containerListMap[item.containerNo] = []
+        }
+        if (!containerListMap[item.containerNo].some(l => l._id.equals(sl._id))) {
+          containerListMap[item.containerNo].push({ _id: sl._id, name: sl.name })
+        }
+      })
+    })
+
+    const data = containers.map(c => ({
+      ...c,
+      shippingLists: containerListMap[c.containerNo] || [],
+    }))
+    res.json(data)
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -211,127 +262,6 @@ router.delete('/:id', authMiddleware, roleMiddleware('Admin', 'Supervisor'), asy
     const container = await Container.findByIdAndDelete(req.params.id)
     if (!container) return res.status(404).json({ message: 'Không tìm thấy container' })
     res.json({ message: 'Đã xóa container' })
-  } catch (err) {
-    res.status(500).json({ message: err.message })
-  }
-})
-
-router.get('/stats/dashboard', authMiddleware, async (req, res) => {
-  try {
-    const now = new Date()
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const todayEnd = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1)
-    const yesterdayStart = new Date(todayStart); yesterdayStart.setDate(yesterdayStart.getDate() - 1)
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1)
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
-
-    const { dateFrom, dateTo } = req.query
-    const dateMatch = {}
-    if (dateFrom || dateTo) {
-      if (dateFrom) dateMatch.$gte = new Date(dateFrom)
-      if (dateTo) {
-        const end = new Date(dateTo)
-        end.setDate(end.getDate() + 1)
-        dateMatch.$lt = end
-      }
-    }
-
-    const [
-      totalContainers,
-      todayContainers,
-      yesterdayContainers,
-      monthContainers,
-      lastMonthContainers,
-    ] = await Promise.all([
-      Container.countDocuments(Object.keys(dateMatch).length ? { createdAt: dateMatch } : {}),
-      Container.countDocuments({ createdAt: { $gte: todayStart, $lt: todayEnd } }),
-      Container.countDocuments({ createdAt: { $gte: yesterdayStart, $lt: todayStart } }),
-      Container.countDocuments({ createdAt: { $gte: monthStart, $lt: monthEnd } }),
-      Container.countDocuments({ createdAt: { $gte: lastMonthStart, $lt: lastMonthEnd } }),
-    ])
-
-    const baseMatch = Object.keys(dateMatch).length ? { createdAt: dateMatch } : { createdAt: { $gte: monthStart, $lt: monthEnd } }
-
-    const [byDay, byMonth, byWeek, byShippingLine, bySize, topContainers, dailyDetail] = await Promise.all([
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, total: { $sum: 1 } } },
-        { $sort: { _id: 1 } },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: { $dateToString: { format: '%Y-%m', date: '$createdAt' } }, total: { $sum: 1 } } },
-        { $sort: { _id: 1 } },
-        { $limit: 12 },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        {
-          $group: {
-            _id: { week: { $isoWeek: '$createdAt' }, year: { $isoWeekYear: '$createdAt' } },
-            total: { $sum: 1 },
-            startDate: { $min: '$createdAt' },
-            endDate: { $max: '$createdAt' },
-          },
-        },
-        { $sort: { '_id.year': -1, '_id.week': -1 } },
-        { $limit: 12 },
-        {
-          $project: {
-            _id: 0,
-            week: '$_id.week',
-            year: '$_id.year',
-            total: 1,
-            label: { $concat: [{ $toString: '$_id.week' }, '/', { $toString: '$_id.year' }] },
-            startDate: 1,
-            endDate: 1,
-          },
-        },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: '$shippingLine', total: { $sum: 1 } } },
-        { $sort: { total: -1 } },
-        { $limit: 10 },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: '$size', total: { $sum: 1 } } },
-        { $sort: { total: -1 } },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: { containerNo: '$containerNo', shippingLine: '$shippingLine', size: '$size', location: '$location', bay: '$bay', remark: '$remark' }, count: { $sum: 1 } } },
-        { $sort: { count: -1 } },
-        { $limit: 5 },
-        { $replaceRoot: { newRoot: { $mergeObjects: ['$_id', { count: '$count' }] } } },
-      ]),
-      Container.aggregate([
-        { $match: baseMatch },
-        { $group: { _id: { date: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } }, shippingLine: '$shippingLine' }, count: { $sum: 1 } } },
-        { $sort: { '_id.date': 1, count: -1 } },
-        { $group: { _id: '$_id.date', shippingLines: { $push: { name: '$_id.shippingLine', count: '$count' } }, total: { $sum: '$count' } } },
-        { $sort: { _id: 1 } },
-        { $project: { _id: 0, date: '$_id', total: 1, shippingLines: 1 } },
-      ]),
-    ])
-
-    res.json({
-      totalContainers,
-      todayContainers,
-      yesterdayContainers,
-      monthContainers,
-      lastMonthContainers,
-      byDay,
-      byMonth,
-      byWeek,
-      byShippingLine,
-      bySize,
-      topContainers,
-      dailyDetail,
-    })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, AutoComplete, Spin, Image } from 'antd'
+import { Table, Button, Input, Select, Space, Tag, Modal, Form, Row, Col, Card, Divider, Popconfirm, message, Tooltip, Upload, DatePicker, Radio, AutoComplete, Spin, Image, Checkbox, Popover } from 'antd'
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, UploadOutlined, LockOutlined, CopyOutlined, FolderOpenOutlined, FilterOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
@@ -28,6 +28,31 @@ function ContainerManagement() {
   const [referenceData, setReferenceData] = useState(() => {
     try { return JSON.parse(localStorage.getItem('containerRef') || '[]') } catch { return [] }
   })
+  const [selectedExportFields, setSelectedExportFields] = useState({
+    containerNo: true,
+    shippingLine: false,
+    size: false,
+    location: true,
+    remark: true,
+    bay: false,
+    createdAt: false,
+    listTau: false,
+  })
+  const [exportFieldOpen, setExportFieldOpen] = useState(false)
+
+  const exportFieldLabels = {
+    containerNo: 'Container No',
+    shippingLine: 'Hãng tàu',
+    size: 'Size',
+    location: 'Phân Loại',
+    remark: 'Ghi chú',
+    bay: 'Bay',
+    createdAt: 'Ngày tạo',
+    listTau: 'List tàu',
+  }
+
+  const getActiveExportFields = () =>
+    Object.entries(selectedExportFields).filter(([, v]) => v).map(([k]) => exportFieldLabels[k])
   const [addContainerNo, setAddContainerNo] = useState('')
   const [addShippingLine, setAddShippingLine] = useState('')
   const [addSize, setAddSize] = useState('')
@@ -586,6 +611,7 @@ function ContainerManagement() {
         'Phân Loại': c.location || '',
         'Ghi chú': c.remark || '',
         Bay: String(c.bay ?? '').trim(),
+        'List tàu': (c.shippingLists || []).map(l => l.name).join(', '),
       }))
       setPreviewData(data)
       const colors = ['#f0f5ff', '#fff7e6', '#f6ffed', '#fff0f6', '#e6fffb', '#f9f0ff', '#fffbe6']
@@ -606,12 +632,18 @@ function ContainerManagement() {
   }
 
   const downloadExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(previewData)
+    const activeFields = getActiveExportFields()
+    const data = previewData.map(r => {
+      const obj = { STT: r.STT }
+      activeFields.forEach(f => { obj[f] = r[f] })
+      return obj
+    })
+    if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
+    const ws = XLSX.utils.json_to_sheet(data)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Containers')
     ws['!cols'] = [
-      { wch: 5 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 18 },
-      { wch: 20 }, { wch: 30 }, { wch: 10 },
+      { wch: 5 }, ...activeFields.map(() => ({ wch: 18 })),
     ]
     XLSX.writeFile(wb, `containers_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`)
     message.success('Đã tải Excel')
@@ -653,24 +685,37 @@ function ContainerManagement() {
   const columns = [
     { title: 'STT', key: 'stt', width: 60, render: (_, __, i) => (page - 1) * pageSize + i + 1 },
     { title: 'SL', key: 'count', width: 60, align: 'center', render: (_, r) => containerFreq[r.containerNo] > 1 ? <Tag color="red">{containerFreq[r.containerNo]}</Tag> : containerFreq[r.containerNo] },
-    { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', sorter: true },
-    { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 100, sorter: true },
-    { title: 'Size', dataIndex: 'size', key: 'size', width: 100, sorter: true },
-    { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 120 },
+    { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo',width: 120, sorter: true },
+    { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 80, sorter: true },
+    { title: 'Size', dataIndex: 'size', key: 'size', width: 60, sorter: true },
+    { title: 'GRADE', dataIndex: 'location', key: 'location', width: 100 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
-    { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
+    { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 60 },
+    { title: 'List tàu', key: 'shippingLists', width: 180,
+      render: (_, r) => {
+        const lists = r.shippingLists || []
+        if (!lists.length) return <span className="text-gray-400">--</span>
+        return (
+          <Space wrap size={2}>
+            {lists.map((l, i) => (
+              <Tag key={i} color="blue" style={{ margin: 0, cursor: 'pointer' }}>{l.name}</Tag>
+            ))}
+          </Space>
+        )
+      },
+    },
     {
       title: 'Ngày tạo', dataIndex: 'createdAt', key: 'createdAt', width: 120, sorter: true,
       render: (v) => dayjs(v).format('DD/MM/YYYY'),
     },
-    { title: 'Hình In', key: 'hinhIn', width: 80, align: 'center',
+    { title: 'Hình IN', key: 'hinhIn', width: 90, align: 'center',
       render: (_, r) => (
         <Tag color={r.hinhIn ? 'green' : 'red'} style={{ cursor: 'pointer' }} onClick={() => handleOpenImages(r, 'in')}>
           {r.hinhIn ? 'Có' : 'Không'}
         </Tag>
       ),
     },
-    { title: 'Hình SC', key: 'hinhSC', width: 80, align: 'center',
+    { title: 'Hình SC', key: 'hinhSC', width: 90, align: 'center',
       render: (_, r) => (
         <Tag color={r.hinhSC ? 'green' : 'red'} style={{ cursor: 'pointer' }} onClick={() => handleOpenImages(r, 'sc')}>
           {r.hinhSC ? 'Có' : 'Không'}
@@ -1151,10 +1196,32 @@ function ContainerManagement() {
         open={previewOpen}
         onCancel={() => { setPreviewOpen(false); setSelectedRowKeys([]) }}
         footer={<Space>
+          <Popover
+            open={exportFieldOpen}
+            onOpenChange={setExportFieldOpen}
+            trigger="click"
+            title="Chọn cột xuất"
+            content={
+              <Space direction="vertical" style={{ minWidth: 160 }}>
+                {Object.entries(exportFieldLabels).map(([key, label]) => (
+                  <Checkbox
+                    key={key}
+                    checked={selectedExportFields[key]}
+                    onChange={e => setSelectedExportFields(p => ({ ...p, [key]: e.target.checked }))}
+                  >
+                    {label}
+                  </Checkbox>
+                ))}
+              </Space>
+            }
+          >
+            <Button icon={<FilterOutlined />}>Chọn cột</Button>
+          </Popover>
           <Button icon={<CopyOutlined />} onClick={() => {
+            const activeFields = getActiveExportFields()
+            if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
             const rows = selectedRowKeys.length ? previewData.filter(r => selectedRowKeys.includes(r.STT)) : previewData
-            const fields = ['Container No', 'Hãng tàu', 'Size', 'Ngày tạo', 'Phân Loại', 'Ghi chú']
-            const tsv = rows.map(r => fields.map(h => String(r[h] ?? '')).join('\t')).join('\n')
+            const tsv = rows.map(r => activeFields.map(h => String(r[h] ?? '')).join('\t')).join('\n')
             navigator.clipboard.writeText(tsv)
             message.success(`Đã copy ${rows.length} dòng`)
           }}>Copy {selectedRowKeys.length ? `(${selectedRowKeys.length})` : '(tất cả)'}</Button>
@@ -1168,14 +1235,15 @@ function ContainerManagement() {
             onChange: setSelectedRowKeys,
           }}
           columns={[
-            { title: 'STT', key: 'stt', width: 50, render: (_, __, i) => i + 1 },
-            { title: 'Container No', dataIndex: 'Container No', key: 'Container No' },
+            { title: 'STT', key: 'stt', width: 40, render: (_, __, i) => i + 1 },
+            { title: 'Container No', dataIndex: 'Container No', key: 'Container No',width: 120 },
             { title: 'Hãng tàu', dataIndex: 'Hãng tàu', key: 'Hãng tàu' },
-            { title: 'Size', dataIndex: 'Size', key: 'Size' },
+            { title: 'Size', dataIndex: 'Size', key: 'Size',width: 60 },
             { title: 'Ngày tạo', dataIndex: 'Ngày tạo', key: 'Ngày tạo', width: 100 },
             { title: 'Phân Loại', dataIndex: 'Phân Loại', key: 'Phân Loại', width: 120 },
             { title: 'Ghi chú', dataIndex: 'Ghi chú', key: 'Ghi chú', width: 150, ellipsis: true },
             { title: 'Bay', dataIndex: 'Bay', key: 'Bay', width: 80 },
+            { title: 'List tàu', dataIndex: 'List tàu', key: 'List tàu', width: 150, ellipsis: true },
           ]}
           dataSource={previewData}
           rowKey="STT"
