@@ -1,10 +1,40 @@
 import { Router } from 'express'
 import ProductionLock from '../models/ProductionLock.js'
 import Container from '../models/Container.js'
+import ShippingList from '../models/ShippingList.js'
 import { authMiddleware } from '../middleware/auth.js'
 import dayjs from 'dayjs'
 import isoWeek from 'dayjs/plugin/isoWeek.js'
 dayjs.extend(isoWeek)
+
+function appendDate(current, newDate) {
+  if (!current) return newDate
+  const dates = current.split(', ').map(d => d.trim())
+  if (dates.includes(newDate)) return current
+  return current + ', ' + newDate
+}
+
+async function updateShippingListFromLock(items, lockDate) {
+  for (const item of items) {
+    const cn = item.containerNo
+    const remark = (item.remark || '').toUpperCase()
+    const lists = await ShippingList.find({ 'items.containerNo': cn })
+    for (const list of lists) {
+      const listItem = list.items.find(i => i.containerNo === cn)
+      if (!listItem) continue
+      if (/VS\s*[-–]\s*DVS/.test(remark)) {
+        listItem.vsDvs = appendDate(listItem.vsDvs, lockDate)
+      } else if (/X[UÚÙỦŨỤỨỪỬỮỰ] L[IÍÌĨỊ] L[AÀÁÃẠ]I/.test(remark)) {
+        listItem.xuLiLai = appendDate(listItem.xuLiLai, lockDate)
+      } else {
+        listItem.dsc = appendDate(listItem.dsc, lockDate)
+        listItem.choHtxnDvs = appendDate(listItem.choHtxnDvs, lockDate)
+        listItem.sc = appendDate(listItem.sc, lockDate)
+      }
+      await list.save()
+    }
+  }
+}
 
 const router = Router()
 
@@ -53,6 +83,9 @@ router.post('/', authMiddleware, async (req, res) => {
         { $set: { locked: true } }
       )
     }
+    if (items && items.length) {
+      updateShippingListFromLock(items, date).catch(() => {})
+    }
     res.status(201).json(lock)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -72,6 +105,9 @@ router.put('/:id/items', authMiddleware, async (req, res) => {
       { new: true }
     )
     if (!lock) return res.status(404).json({ message: 'Không tìm thấy lock' })
+    if (items && items.length) {
+      updateShippingListFromLock(items, lock.date).catch(() => {})
+    }
     res.json(lock)
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -184,6 +220,33 @@ router.get('/container-data/:containerNo', authMiddleware, async (req, res) => {
       },
       { $limit: 30 },
     ])
+    res.json(result)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// POST /api/locks/check-status — check which containers are locked
+router.post('/check-status', authMiddleware, async (req, res) => {
+  try {
+    const { containerNos } = req.body
+    if (!containerNos || !containerNos.length) {
+      return res.json({})
+    }
+    const locks = await ProductionLock.find(
+      { 'items.containerNo': { $in: containerNos } },
+      { 'items.containerNo': 1 }
+    ).lean()
+    const lockedSet = new Set()
+    locks.forEach(lock => {
+      lock.items.forEach(item => {
+        lockedSet.add(item.containerNo)
+      })
+    })
+    const result = {}
+    containerNos.forEach(no => {
+      result[no] = lockedSet.has(no)
+    })
     res.json(result)
   } catch (err) {
     res.status(500).json({ message: err.message })

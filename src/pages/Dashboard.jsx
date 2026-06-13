@@ -28,7 +28,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [chartsReady, setChartsReady] = useState(false)
-  const [dateRange, setDateRange] = useState(null)
+  const [dateRange, setDateRange] = useState([dayjs(), dayjs()])
 
   const buildParams = () => {
     if (!dateRange || !dateRange[0] || !dateRange[1]) return ''
