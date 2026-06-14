@@ -45,6 +45,8 @@ router.get('/', authMiddleware, async (req, res) => {
         { shippingLine: { $regex: search, $options: 'i' } },
         { location: { $regex: search, $options: 'i' } },
       ]
+    } else if (locked === undefined || locked === '') {
+      query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
@@ -164,6 +166,8 @@ router.get('/all', authMiddleware, async (req, res) => {
         { containerNo: { $regex: search, $options: 'i' } },
         { shippingLine: { $regex: search, $options: 'i' } },
       ]
+    } else if (locked === undefined || locked === '') {
+      query.locked = { $ne: true }
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
@@ -224,6 +228,8 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
         { shippingLine: { $regex: search, $options: 'i' } },
         { location: { $regex: search, $options: 'i' } },
       ]
+    } else if (locked === undefined || locked === '') {
+      match.locked = { $ne: true }
     }
     if (shippingLine) match.shippingLine = shippingLine
     if (size) match.size = size
