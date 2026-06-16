@@ -100,6 +100,10 @@ function ContainerManagement() {
   const addNoRef = useRef(null)
   const folderInHandlesRef = useRef([])
   const folderSCHandlesRef = useRef([])
+  const [lockEditOpen, setLockEditOpen] = useState(false)
+  const [lockEditing, setLockEditing] = useState(null)
+  const [lockEditSubmitting, setLockEditSubmitting] = useState(false)
+  const [lockEditForm] = Form.useForm()
 
   useEffect(() => {
     localStorage.setItem('containerRef', JSON.stringify(referenceData))
@@ -691,6 +695,41 @@ function ContainerManagement() {
     }
   }
 
+  const openLockEdit = (record) => {
+    setLockEditing(record)
+    lockEditForm.setFieldsValue({
+      containerNo: record.containerNo,
+      shippingLine: record.shippingLine,
+      size: record.size,
+      bay: record.bay || '',
+      location: record.location || '',
+      remark: record.remark || '',
+    })
+    setLockEditOpen(true)
+  }
+
+  const handleLockEditSubmit = async () => {
+    try {
+      const values = await lockEditForm.validateFields()
+      setLockEditSubmitting(true)
+      await api.put(`/locks/${lockEditing.lockId}/items/${lockEditing._id}`, {
+        containerNo: values.containerNo,
+        shippingLine: values.shippingLine,
+        size: values.size,
+        bay: values.bay || '',
+        location: values.location || '',
+        remark: values.remark || '',
+      })
+      message.success('Cập nhật sản lượng thành công')
+      setLockEditOpen(false)
+      fetchData()
+    } catch (e) {
+      if (e.response) message.error(e.response.data?.message || 'Lỗi cập nhật sản lượng')
+    } finally {
+      setLockEditSubmitting(false)
+    }
+  }
+
   const containerFreq = frequencies
 
   const columns = [
@@ -745,9 +784,12 @@ function ContainerManagement() {
       render: (_, record) => {
         if (record._source === 'lock') {
           return (
-            <Tooltip title={`Sản lượng: ${record.lockDate} ${record.lockShift || ''}`}>
-              <Tag color="orange" style={{ cursor: 'pointer' }}>SL</Tag>
-            </Tooltip>
+            <Space>
+              <Tooltip title={`Sản lượng: ${record.lockDate} ${record.lockShift || ''}`}>
+                <Tag color="orange" style={{ cursor: 'pointer' }}>SL</Tag>
+              </Tooltip>
+              <Tooltip title="Sửa sản lượng"><Button type="text" size="small" icon={<EditOutlined />} onClick={() => openLockEdit(record)} /></Tooltip>
+            </Space>
           )
         }
         return (
@@ -1353,6 +1395,72 @@ function ContainerManagement() {
             {remarkList.length === 0 && <p className="text-gray-400 text-center">Chưa có dữ liệu</p>}
           </div>
         </Space>
+      </Modal>
+
+      <Modal
+        title="Sửa sản lượng"
+        open={lockEditOpen}
+        onOk={handleLockEditSubmit}
+        onCancel={() => setLockEditOpen(false)}
+        confirmLoading={lockEditSubmitting}
+        okText="Cập nhật"
+        cancelText="Hủy"
+        width={500}
+      >
+        <Form form={lockEditForm} layout="vertical">
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="containerNo" label="Container No" rules={[{ required: true, message: 'Nhập số container' }]}>
+                <Input placeholder="VD: TEMU5750298" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="shippingLine" label="Hãng tàu" rules={[{ required: true, message: 'Chọn hãng tàu' }]}>
+                <AutoComplete placeholder="Chọn hoặc nhập hãng tàu"
+                  options={[
+                    { value: 'MSC' },
+                    { value: 'MAERSK' },
+                    { value: 'CMA CGM' },
+                    { value: 'COSCO' },
+                    { value: 'HAPAG-LLOYD' },
+                    { value: 'ONE' },
+                    { value: 'EVERGREEN' },
+                    { value: 'YANG MING' },
+                    { value: 'ZIM' },
+                    { value: 'WAN HAI' },
+                    { value: 'Other' },
+                  ]}
+                  filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="size" label="Size" rules={[{ required: true, message: 'Nhập size' }]}>
+                <Input placeholder="VD: 40HC" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="location" label="Phân Loại">
+                <AutoComplete placeholder="VD: Hư hỏng nặng / Nhẹ / ..."
+                  options={[...new Set([...locationList, ...(lockEditForm.getFieldValue('location') ? [lockEditForm.getFieldValue('location')] : [])])].filter(Boolean).map(o => ({ value: o }))}
+                  filterOption={(input, option) => option.value.toUpperCase().includes(input.toUpperCase())}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item name="bay" label="Bay">
+                <Input placeholder="VD: A01" onInput={e => e.target.value = e.target.value.toUpperCase()} onBlur={e => { const v = e.target.value.toUpperCase().trim(); if (v && !v.startsWith('BAY ')) { const f = 'BAY ' + v; e.target.value = f; lockEditForm.setFieldValue('bay', f) } }} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="remark" label="Ghi chú">
+            <Input.TextArea rows={2} onInput={e => e.target.value = e.target.value.toUpperCase()} />
+          </Form.Item>
+        </Form>
       </Modal>
     </div>
   )

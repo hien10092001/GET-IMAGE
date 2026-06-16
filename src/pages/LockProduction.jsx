@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -67,6 +67,15 @@ function LockProduction() {
   const [slSelectedRowKeys, setSlSelectedRowKeys] = useState([])
   const [slDateRange, setSlDateRange] = useState(null)
   const [slDetailDateRange, setSlDetailDateRange] = useState(null)
+  const [classifyOpen, setClassifyOpen] = useState(false)
+  const [keywordsDsc, setKeywordsDsc] = useState([])
+  const [keywordsXuLi, setKeywordsXuLi] = useState([])
+  const [keywordsVs, setKeywordsVs] = useState([])
+  const [kwInputDsc, setKwInputDsc] = useState('')
+  const [kwInputXuLi, setKwInputXuLi] = useState('')
+  const [kwInputVs, setKwInputVs] = useState('')
+  const [classifySubmitting, setClassifySubmitting] = useState(false)
+  const [savingKeywords, setSavingKeywords] = useState(false)
   const [selectedExportFields, setSelectedExportFields] = useState({
     containerNo: true,
     shippingLine: false,
@@ -423,6 +432,158 @@ function LockProduction() {
     } catch { message.error('Lỗi xóa') }
   }
 
+  const flattenSlItems = (lists) => {
+    const result = []
+    lists.forEach(sl => {
+      ;(sl.items || []).forEach(item => {
+        result.push({ ...item, _slId: sl._id, _slName: sl.name })
+      })
+    })
+    return result
+  }
+
+  const openClassify = async () => {
+    try {
+      setKwInputDsc('')
+      setKwInputXuLi('')
+      setKwInputVs('')
+      const res = await api.get('/classification')
+      setKeywordsDsc(res.data.dsc || [])
+      setKeywordsXuLi(res.data.xuLi || [])
+      setKeywordsVs(res.data.vs || [])
+      setClassifyOpen(true)
+    } catch {
+      message.error('Lỗi tải từ khóa phân loại')
+    }
+  }
+
+  const handleSaveKeywords = async () => {
+    setSavingKeywords(true)
+    try {
+      await api.put('/classification', { dsc: keywordsDsc, xuLi: keywordsXuLi, vs: keywordsVs })
+      message.success('Đã lưu từ khóa')
+    } catch {
+      message.error('Lỗi lưu từ khóa')
+    } finally {
+      setSavingKeywords(false)
+    }
+  }
+
+  const normalizeText = (str) => ' ' + str.toUpperCase().trim().replace(/[.,;:!?()\/\\\-_]+/g, ' ').replace(/\s+/g, ' ') + ' '
+
+  const remarkMatchesAny = (remark, keys) => {
+    if (!keys.length) return false
+    const normalized = normalizeText(remark)
+    return keys.some(k => {
+      const kw = k.toUpperCase().trim()
+      if (!kw) return false
+      const normalizedKw = normalizeText(kw)
+      return normalized.includes(normalizedKw)
+    })
+  }
+
+  const handleApplyClassify = async () => {
+    setClassifySubmitting(true)
+    try {
+      const slRes = await api.get('/shipping-lists')
+      const allItems = flattenSlItems(slRes.data)
+      if (!allItems.length) {
+        message.warning('Không có shipping list nào để phân loại')
+        setClassifySubmitting(false)
+        return
+      }
+      const allContainerNos = [...new Set(allItems.map(i => i.containerNo).filter(Boolean))]
+      let remarkMap = {}
+      let dateMap = {}
+      if (allContainerNos.length) {
+        try {
+          const containerRes = await api.post('/containers/by-nos', { containerNos: allContainerNos })
+          ;(containerRes.data || []).forEach(c => {
+            if (c.containerNo && c.remark) remarkMap[c.containerNo] = c.remark
+            if (c.containerNo && c.createdAt) dateMap[c.containerNo] = dayjs(c.createdAt).format('YYYY-MM-DD')
+          })
+        } catch {
+          const containerRes = await api.get('/containers/all', { params: { locked: 'all' } })
+          ;(containerRes.data || []).forEach(c => {
+            if (c.containerNo && c.remark) remarkMap[c.containerNo] = c.remark
+            if (c.containerNo && c.createdAt) dateMap[c.containerNo] = dayjs(c.createdAt).format('YYYY-MM-DD')
+          })
+        }
+      }
+      const today = dayjs().format('YYYY-MM-DD')
+      let matchCount = 0
+      let remarkCount = 0
+      const noDscKeys = !keywordsDsc.length
+      const noXuLiKeys = !keywordsXuLi.length
+      const noVsKeys = !keywordsVs.length
+      const updates = allItems.map(i => {
+        const remark = i.remark || remarkMap[i.containerNo] || ''
+        if (remark) remarkCount++
+        const matchDsc = noDscKeys ? false : remarkMatchesAny(remark, keywordsDsc)
+        const matchXuLi = noXuLiKeys ? false : remarkMatchesAny(remark, keywordsXuLi)
+        const matchVs = noVsKeys ? false : remarkMatchesAny(remark, keywordsVs)
+        if (matchDsc || matchXuLi || matchVs) matchCount++
+        const classDate = dateMap[i.containerNo] || today
+        const calcField = (current, match, clear) => {
+          if (clear) return ''
+          if (!match) return current || ''
+          if (!current) return classDate
+          const dates = current.split(', ').map(d => d.trim())
+          if (dates.includes(classDate)) return current
+          return current + ', ' + classDate
+        }
+        const newDsc = calcField(i.dsc || i.choHtxnDvs || i.sc, matchDsc, noDscKeys)
+        const newChoHtxnDvs = calcField(i.choHtxnDvs, matchDsc, noDscKeys)
+        const newSc = calcField(i.sc, matchDsc, noDscKeys)
+        const newXuLi = calcField(i.xuLiLai, matchXuLi, noXuLiKeys)
+        const newVs = calcField(i.vsDvs, matchVs, noVsKeys)
+        const oldDscVal = i.dsc || i.choHtxnDvs || i.sc || ''
+        if (newDsc === oldDscVal && newXuLi === (i.xuLiLai || '') && newVs === (i.vsDvs || '')) return null
+        return { _slId: i._slId, _id: i._id, dsc: newDsc, choHtxnDvs: newChoHtxnDvs, sc: newSc, xuLiLai: newXuLi, vsDvs: newVs }
+      }).filter(Boolean)
+      console.log('=== DEBUG PHAN LOAI ===')
+      console.log('Tong items:', allItems.length)
+      console.log('Items co remark:', remarkCount)
+      console.log('Items match keywords:', matchCount)
+      console.log('Updates se gui:', updates.length)
+      console.log('Keywords DSC:', keywordsDsc)
+      console.log('Keywords XU LI:', keywordsXuLi)
+      console.log('Keywords VS:', keywordsVs)
+      if (!updates.length && allItems.length) {
+        console.log('5 item dau tien:')
+        allItems.slice(0, 5).forEach((i, idx) => {
+          const remark = i.remark || remarkMap[i.containerNo] || ''
+          const classDate = dateMap[i.containerNo] || today
+          console.log(`  Item ${idx}: cont=${i.containerNo}, remark="${remark}", classDate="${classDate}", dsc="${i.dsc || i.choHtxnDvs || i.sc}", xuLi="${i.xuLiLai}", vs="${i.vsDvs}"`)
+        })
+      }
+      if (!updates.length) {
+        message.warning('Không có thay đổi')
+        setClassifySubmitting(false)
+        return
+      }
+      const grouped = {}
+      updates.forEach(i => {
+        if (!grouped[i._slId]) grouped[i._slId] = []
+        grouped[i._slId].push({ _id: i._id, dsc: i.dsc, choHtxnDvs: i.choHtxnDvs, sc: i.sc, xuLiLai: i.xuLiLai, vsDvs: i.vsDvs })
+      })
+      let total = 0
+      for (const [slId, upds] of Object.entries(grouped)) {
+        await api.put(`/shipping-lists/${slId}/items`, { updates: upds })
+        total += upds.length
+      }
+      await api.put('/classification', { dsc: keywordsDsc, xuLi: keywordsXuLi, vs: keywordsVs })
+      message.success(`Đã cập nhật ${total} container trong ${Object.keys(grouped).length} list`)
+      setClassifyOpen(false)
+      fetchShippingLists(slDateRange)
+    } catch (e) {
+      console.error('Apply classify error:', e)
+      message.error(e.response?.data?.message || e.message || 'Lỗi cập nhật')
+    } finally {
+      setClassifySubmitting(false)
+    }
+  }
+
   useEffect(() => { fetchShippingLists(slDateRange) }, [slDateRange])
 
   const columns = [
@@ -684,7 +845,7 @@ function LockProduction() {
               label: <span><EyeOutlined /> Danh sách tàu</span>,
               children: (
                 <>
-                <div className="mb-3">
+                <div className="mb-3 flex flex-wrap gap-2 items-center">
                   <DatePicker.RangePicker
                     value={slDateRange}
                     onChange={dates => setSlDateRange(dates)}
@@ -693,6 +854,9 @@ function LockProduction() {
                     allowClear
                     onClear={() => setSlDateRange(null)}
                   />
+                  <Button icon={<CheckCircleOutlined />} onClick={openClassify}>
+                    Phân loại
+                  </Button>
                 </div>
                 <Table
                   rowKey="_id"
@@ -1260,6 +1424,78 @@ function LockProduction() {
               </>
             )
           })()}
+      </Modal>
+
+      <Modal
+        title="Phân loại từ ghi chú"
+        open={classifyOpen}
+        onCancel={() => setClassifyOpen(false)}
+        footer={[
+          <Button key="save" icon={<SaveOutlined />} onClick={handleSaveKeywords} loading={savingKeywords}>Lưu từ khóa</Button>,
+          <Button key="cancel" onClick={() => setClassifyOpen(false)}>Hủy</Button>,
+          <Button key="apply" type="primary" icon={<CheckCircleOutlined />} onClick={handleApplyClassify} loading={classifySubmitting}>Áp dụng</Button>,
+        ]}
+        width={800}
+      >
+        <Row gutter={[16, 16]}>
+          <Col span={8}>
+            <div className="border rounded p-3" style={{ minHeight: 300 }}>
+              <h4 className="font-medium text-green-700 mb-2">DA SUA CHUA</h4>
+              <div className="flex gap-1 mb-2 flex-wrap">
+                {keywordsDsc.map((kw, i) => (
+                  <Tag key={i} closable onClose={() => setKeywordsDsc(p => p.filter((_, j) => j !== i))} color="green">{kw}</Tag>
+                ))}
+              </div>
+              <Input.Search
+                placeholder="Thêm từ khóa..."
+                value={kwInputDsc}
+                onChange={e => setKwInputDsc(e.target.value)}
+                onSearch={v => { if (v.trim()) { setKeywordsDsc(p => [...p, v.trim()]); setKwInputDsc('') } }}
+                enterButton={<PlusOutlined />}
+                allowClear
+                onClear={() => setKwInputDsc('')}
+              />
+            </div>
+          </Col>
+          <Col span={8}>
+            <div className="border rounded p-3" style={{ minHeight: 300 }}>
+              <h4 className="font-medium text-red-700 mb-2">XU LI LAI</h4>
+              <div className="flex gap-1 mb-2 flex-wrap">
+                {keywordsXuLi.map((kw, i) => (
+                  <Tag key={i} closable onClose={() => setKeywordsXuLi(p => p.filter((_, j) => j !== i))} color="red">{kw}</Tag>
+                ))}
+              </div>
+              <Input.Search
+                placeholder="Thêm từ khóa..."
+                value={kwInputXuLi}
+                onChange={e => setKwInputXuLi(e.target.value)}
+                onSearch={v => { if (v.trim()) { setKeywordsXuLi(p => [...p, v.trim()]); setKwInputXuLi('') } }}
+                enterButton={<PlusOutlined />}
+                allowClear
+                onClear={() => setKwInputXuLi('')}
+              />
+            </div>
+          </Col>
+          <Col span={8}>
+            <div className="border rounded p-3" style={{ minHeight: 300 }}>
+              <h4 className="font-medium text-blue-700 mb-2">DA VE SINH</h4>
+              <div className="flex gap-1 mb-2 flex-wrap">
+                {keywordsVs.map((kw, i) => (
+                  <Tag key={i} closable onClose={() => setKeywordsVs(p => p.filter((_, j) => j !== i))} color="blue">{kw}</Tag>
+                ))}
+              </div>
+              <Input.Search
+                placeholder="Thêm từ khóa..."
+                value={kwInputVs}
+                onChange={e => setKwInputVs(e.target.value)}
+                onSearch={v => { if (v.trim()) { setKeywordsVs(p => [...p, v.trim()]); setKwInputVs('') } }}
+                enterButton={<PlusOutlined />}
+                allowClear
+                onClear={() => setKwInputVs('')}
+              />
+            </div>
+          </Col>
+        </Row>
       </Modal>
     </div>
   )

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import ShippingList from '../models/ShippingList.js'
 import ProductionLock from '../models/ProductionLock.js'
+import Classification from '../models/Classification.js'
 import { authMiddleware } from '../middleware/auth.js'
 
 const router = Router()
@@ -10,6 +11,20 @@ function appendDate(current, newDate) {
   const dates = current.split(', ').map(d => d.trim())
   if (dates.includes(newDate)) return current
   return current + ', ' + newDate
+}
+
+function normalizeText(str) {
+  return ' ' + str.toUpperCase().trim().replace(/[.,;:!?()\/\\\-_]+/g, ' ').replace(/\s+/g, ' ') + ' '
+}
+
+function keywordMatch(remark, keys) {
+  if (!keys.length) return false
+  const normalized = normalizeText(remark)
+  return keys.some(k => {
+    const kw = k.toUpperCase().trim()
+    if (!kw) return false
+    return normalized.includes(normalizeText(kw))
+  })
 }
 
 // GET /api/shipping-lists — list all, optional dateFrom/dateTo
@@ -47,6 +62,7 @@ router.post('/', authMiddleware, async (req, res) => {
         containerNo: (i.containerNo || '').toUpperCase().trim(),
         shippingLine: i.shippingLine || '',
         size: i.size || '',
+        remark: i.remark || '',
         dsc: i.dsc || '',
         choHtxnDvs: i.choHtxnDvs || '',
         sc: i.sc || '',
@@ -67,6 +83,11 @@ router.get('/:id', authMiddleware, async (req, res) => {
     const list = await ShippingList.findById(req.params.id).lean()
     if (!list) return res.status(404).json({ message: 'Không tìm thấy' })
 
+    const cls = await Classification.findOne({ key: 'main' })
+    const dscKeys = cls?.dsc || []
+    const xuLiKeys = cls?.xuLi || []
+    const vsKeys = cls?.vs || []
+
     const containerNos = list.items.map(i => i.containerNo)
     const locks = await ProductionLock.find(
       { 'items.containerNo': { $in: containerNos } },
@@ -80,17 +101,17 @@ router.get('/:id', authMiddleware, async (req, res) => {
           const cn = item.containerNo
             if (!lockInfo[cn]) lockInfo[cn] = { locked: false, dsc: '', choHtxnDvs: '', sc: '', vsDvs: '', xuLiLai: '' }
             lockInfo[cn].locked = true
-            const remark = (item.remark || '').toUpperCase()
-            if (/VS\s*[-–]\s*DVS/.test(remark)) {
-              lockInfo[cn].vsDvs = appendDate(lockInfo[cn].vsDvs, lock.date)
-            } else if (/X[UÚÙỦŨỤỨỪỬỮỰ] L[IÍÌĨỊ] L[AÀÁÃẠ]I/.test(remark)) {
+            const remark = item.remark || ''
+            if (keywordMatch(remark, dscKeys)) {
+              lockInfo[cn].dsc = appendDate(lockInfo[cn].dsc, lock.date)
+              lockInfo[cn].choHtxnDvs = appendDate(lockInfo[cn].choHtxnDvs, lock.date)
+              lockInfo[cn].sc = appendDate(lockInfo[cn].sc, lock.date)
+            }
+            if (keywordMatch(remark, xuLiKeys)) {
               lockInfo[cn].xuLiLai = appendDate(lockInfo[cn].xuLiLai, lock.date)
-            } else {
-              if (/\bDSC\b/.test(remark) || /CHO\s+HTXN/.test(remark) || /\bDVS\b/.test(remark) || /\bSC\b/.test(remark)) {
-                lockInfo[cn].dsc = appendDate(lockInfo[cn].dsc, lock.date)
-                lockInfo[cn].choHtxnDvs = appendDate(lockInfo[cn].choHtxnDvs, lock.date)
-                lockInfo[cn].sc = appendDate(lockInfo[cn].sc, lock.date)
-              }
+            }
+            if (keywordMatch(remark, vsKeys)) {
+              lockInfo[cn].vsDvs = appendDate(lockInfo[cn].vsDvs, lock.date)
             }
         }
       })
@@ -98,25 +119,14 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
     const itemsWithStatus = list.items.map(i => {
       const info = lockInfo[i.containerNo]
-      if (info) {
-        return {
-          ...i,
-          locked: info.locked,
-          dsc: info.dsc,
-          choHtxnDvs: info.choHtxnDvs,
-          sc: info.sc,
-          vsDvs: info.vsDvs,
-          xuLiLai: info.xuLiLai,
-        }
-      }
       return {
         ...i,
-        locked: false,
-        dsc: i.dsc,
-        choHtxnDvs: i.choHtxnDvs,
-        sc: i.sc,
-        vsDvs: i.vsDvs,
-        xuLiLai: i.xuLiLai,
+        locked: info ? info.locked : false,
+        dsc: i.dsc || info?.dsc,
+        choHtxnDvs: i.choHtxnDvs || info?.choHtxnDvs,
+        sc: i.sc || info?.sc,
+        vsDvs: i.vsDvs || info?.vsDvs,
+        xuLiLai: i.xuLiLai || info?.xuLiLai,
       }
     })
 
@@ -131,6 +141,31 @@ router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     await ShippingList.findByIdAndDelete(req.params.id)
     res.json({ message: 'Đã xóa' })
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// PUT /api/shipping-lists/:id/items — bulk-update item fields
+router.put('/:id/items', authMiddleware, async (req, res) => {
+  try {
+    const { updates } = req.body
+    if (!updates || !updates.length) {
+      return res.status(400).json({ message: 'Danh sách cập nhật trống' })
+    }
+    const list = await ShippingList.findById(req.params.id)
+    if (!list) return res.status(404).json({ message: 'Không tìm thấy' })
+    for (const u of updates) {
+      const item = list.items.id(u._id)
+      if (!item) continue
+      if (u.dsc !== undefined) item.dsc = u.dsc
+      if (u.choHtxnDvs !== undefined) item.choHtxnDvs = u.choHtxnDvs
+      if (u.sc !== undefined) item.sc = u.sc
+      if (u.vsDvs !== undefined) item.vsDvs = u.vsDvs
+      if (u.xuLiLai !== undefined) item.xuLiLai = u.xuLiLai
+    }
+    await list.save()
+    res.json(list)
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

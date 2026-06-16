@@ -7,6 +7,8 @@ import authRoutes from './routes/auth.js'
 import containerRoutes from './routes/containers.js'
 import lockRoutes from './routes/locks.js'
 import shippingListRoutes from './routes/shippingLists.js'
+import classificationRoutes from './routes/classification.js'
+import cleanupRoutes from './routes/cleanup.js'
 import User from './models/User.js'
 
 const app = express()
@@ -21,6 +23,8 @@ app.use('/api/auth', authRoutes)
 app.use('/api/containers', containerRoutes)
 app.use('/api/locks', lockRoutes)
 app.use('/api/shipping-lists', shippingListRoutes)
+app.use('/api/classification', classificationRoutes)
+app.use('/api/cleanup', cleanupRoutes)
 
 async function seedAdmin() {
   const exists = await User.findOne({ username: 'admin' })

@@ -121,6 +121,7 @@ router.get('/', authMiddleware, async (req, res) => {
         {
           $project: {
             _id: { $toString: '$items._id' },
+            lockId: { $toString: '$_id' },
             containerNo: '$items.containerNo',
             shippingLine: '$items.shippingLine',
             size: '$items.size',
@@ -137,10 +138,13 @@ router.get('/', authMiddleware, async (req, res) => {
         { $sort: { lockDate: -1 } },
       ]).catch(() => [])
 
-      const lockItems = lockDocs.map(item => ({
-        ...item,
-        shippingLists: [],
-      }))
+      const existingNos = new Set(data.map(c => c.containerNo))
+      const lockItems = lockDocs
+        .filter(item => !existingNos.has(item.containerNo))
+        .map(item => ({
+          ...item,
+          shippingLists: [],
+        }))
 
       allData = [...data, ...lockItems]
       finalTotal = total + lockItems.length
@@ -211,6 +215,22 @@ router.get('/all', authMiddleware, async (req, res) => {
       shippingLists: containerListMap[c.containerNo] || [],
     }))
     res.json(data)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
+// POST /api/containers/by-nos — get containers by list of container numbers
+router.post('/by-nos', authMiddleware, async (req, res) => {
+  try {
+    const { containerNos } = req.body
+    if (!containerNos || !containerNos.length) {
+      return res.json([])
+    }
+    const containers = await Container.find({
+      containerNo: { $in: containerNos.map(n => n.toUpperCase()) },
+    }).sort({ createdAt: -1 }).lean()
+    res.json(containers)
   } catch (err) {
     res.status(500).json({ message: err.message })
   }

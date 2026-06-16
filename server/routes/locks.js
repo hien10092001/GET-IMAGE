@@ -2,6 +2,7 @@ import { Router } from 'express'
 import ProductionLock from '../models/ProductionLock.js'
 import Container from '../models/Container.js'
 import ShippingList from '../models/ShippingList.js'
+import Classification from '../models/Classification.js'
 import { authMiddleware } from '../middleware/auth.js'
 
 
@@ -12,19 +13,42 @@ function appendDate(current, newDate) {
   return current + ', ' + newDate
 }
 
+function normalizeText(str) {
+  return ' ' + str.toUpperCase().trim().replace(/[.,;:!?()\/\\\-_]+/g, ' ').replace(/\s+/g, ' ') + ' '
+}
+
+function getKeywordMatch(remark, keys) {
+  if (!keys.length) return false
+  const normalized = normalizeText(remark)
+  return keys.some(k => {
+    const kw = k.toUpperCase().trim()
+    if (!kw) return false
+    return normalized.includes(normalizeText(kw))
+  })
+}
+
 async function updateShippingListFromLock(items, lockDate) {
+  const cls = await Classification.findOne({ key: 'main' })
+  const dscKeys = cls?.dsc || []
+  const xuLiKeys = cls?.xuLi || []
+  const vsKeys = cls?.vs || []
   for (const item of items) {
     const cn = item.containerNo
-    const remark = (item.remark || '').toUpperCase()
+    const remark = item.remark || ''
     const lists = await ShippingList.find({ 'items.containerNo': cn })
     for (const list of lists) {
       const listItem = list.items.find(i => i.containerNo === cn)
       if (!listItem) continue
-      if (/VS\s*[-–]\s*DVS/.test(remark)) {
+      if (item.remark && item.remark !== listItem.remark) {
+        listItem.remark = item.remark
+      }
+      if (getKeywordMatch(remark, vsKeys)) {
         listItem.vsDvs = appendDate(listItem.vsDvs, lockDate)
-      } else if (/X[UÚÙỦŨỤỨỪỬỮỰ] L[IÍÌĨỊ] L[AÀÁÃẠ]I/.test(remark)) {
+      }
+      if (getKeywordMatch(remark, xuLiKeys)) {
         listItem.xuLiLai = appendDate(listItem.xuLiLai, lockDate)
-      } else if (/\bDSC\b/.test(remark) || /CHO\s+HTXN/.test(remark) || /\bDVS\b/.test(remark) || /\bSC\b/.test(remark)) {
+      }
+      if (getKeywordMatch(remark, dscKeys)) {
         listItem.dsc = appendDate(listItem.dsc, lockDate)
         listItem.choHtxnDvs = appendDate(listItem.choHtxnDvs, lockDate)
         listItem.sc = appendDate(listItem.sc, lockDate)
@@ -60,6 +84,17 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 })
 
+function mergeItems(existing, incoming) {
+  const map = new Map()
+  existing.forEach(item => map.set(item.containerNo, item))
+  incoming.forEach(item => {
+    if (!map.has(item.containerNo)) {
+      map.set(item.containerNo, item)
+    }
+  })
+  return [...map.values()]
+}
+
 // POST /api/locks — create or update a lock (upsert by date+shift)
 router.post('/', authMiddleware, async (req, res) => {
   try {
@@ -67,14 +102,16 @@ router.post('/', authMiddleware, async (req, res) => {
     if (!date || !shift) {
       return res.status(400).json({ message: 'Thiếu ngày hoặc ca' })
     }
-    const lock = await ProductionLock.findOneAndUpdate(
-      { date, shift },
-      {
-        $set: { date, shift, createdBy: req.user.username },
-        $push: { items: { $each: items || [] } },
-      },
-      { upsert: true, new: true }
-    )
+    let lock = await ProductionLock.findOne({ date, shift })
+    if (lock) {
+      lock.items = mergeItems(lock.items, items || [])
+      lock.createdBy = req.user.username
+      await lock.save()
+    } else {
+      lock = await ProductionLock.create({
+        date, shift, createdBy: req.user.username, items: items || [],
+      })
+    }
     if (containerIds && containerIds.length) {
       await Container.updateMany(
         { _id: { $in: containerIds } },
@@ -82,7 +119,7 @@ router.post('/', authMiddleware, async (req, res) => {
       )
     }
     if (items && items.length) {
-      updateShippingListFromLock(items, date).catch(() => {})
+      updateShippingListFromLock(items, date).catch(err => console.error('updateShippingListFromLock error:', err))
     }
     res.status(201).json(lock)
   } catch (err) {
@@ -90,21 +127,19 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 })
 
-// PUT /api/locks/:id/items — add items to existing lock
+// PUT /api/locks/:id/items — add items to existing lock (no duplicates)
 router.put('/:id/items', authMiddleware, async (req, res) => {
   try {
     const { items } = req.body
     if (!items || !items.length) {
       return res.status(400).json({ message: 'Danh sách items trống' })
     }
-    const lock = await ProductionLock.findByIdAndUpdate(
-      req.params.id,
-      { $push: { items: { $each: items } } },
-      { new: true }
-    )
+    const lock = await ProductionLock.findById(req.params.id)
     if (!lock) return res.status(404).json({ message: 'Không tìm thấy lock' })
+    lock.items = mergeItems(lock.items, items)
+    await lock.save()
     if (items && items.length) {
-      updateShippingListFromLock(items, lock.date).catch(() => {})
+      updateShippingListFromLock(items, lock.date).catch(err => console.error('updateShippingListFromLock error:', err))
     }
     res.json(lock)
   } catch (err) {
