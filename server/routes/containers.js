@@ -267,12 +267,47 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
       }
     }
 
-    const pipeline = Object.keys(match).length ? [{ $match: match }, { $group: { _id: '$containerNo', count: { $sum: 1 } } }] : [{ $group: { _id: '$containerNo', count: { $sum: 1 } } }]
-    pipeline.push({ $sort: { count: -1 } })
+    // Frequencies from Container collection
+    const containerPipeline = Object.keys(match).length
+      ? [{ $match: match }, { $group: { _id: '$containerNo', count: { $sum: 1 } } }]
+      : [{ $group: { _id: '$containerNo', count: { $sum: 1 } } }]
+    containerPipeline.push({ $sort: { count: -1 } })
 
-    const result = await Container.aggregate(pipeline)
+    const containerResult = await Container.aggregate(containerPipeline)
+
+    // Frequencies from ProductionLock items
+    const lockMatch = {}
+    if (search) {
+      lockMatch['$or'] = [
+        { 'items.containerNo': { $regex: search, $options: 'i' } },
+        { 'items.shippingLine': { $regex: search, $options: 'i' } },
+        { 'items.location': { $regex: search, $options: 'i' } },
+      ]
+    }
+    if (shippingLine) lockMatch['items.shippingLine'] = shippingLine
+    if (size) lockMatch['items.size'] = size
+    if (location) lockMatch['items.location'] = { $regex: location, $options: 'i' }
+    if (remark) lockMatch['items.remark'] = { $regex: remark, $options: 'i' }
+    if (dateFrom || dateTo) {
+      if (dateFrom) lockMatch.date = { ...(lockMatch.date || {}), $gte: dateFrom }
+      if (dateTo) lockMatch.date = { ...(lockMatch.date || {}), $lte: dateTo }
+    }
+
+    let lockResult = []
+    if (locked !== 'false') {
+      const lockPipeline = [
+        { $unwind: '$items' },
+        ...(Object.keys(lockMatch).length ? [{ $match: lockMatch }] : []),
+        { $group: { _id: '$items.containerNo', count: { $sum: 1 } } },
+      ]
+      lockResult = await ProductionLock.aggregate(lockPipeline).catch(() => [])
+    }
+
+    // Merge both results
     const map = {}
-    result.forEach(r => { map[r._id] = r.count })
+    containerResult.forEach(r => { map[r._id] = r.count })
+    lockResult.forEach(r => { map[r._id] = (map[r._id] || 0) + r.count })
+
     res.json(map)
   } catch (err) {
     res.status(500).json({ message: err.message })
