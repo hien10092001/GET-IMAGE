@@ -138,13 +138,15 @@ router.get('/', authMiddleware, async (req, res) => {
         { $sort: { lockDate: -1 } },
       ]).catch(() => [])
 
-      const existingNos = new Set(data.map(c => c.containerNo))
-      const lockItems = lockDocs
-        .filter(item => !existingNos.has(item.containerNo))
+      let lockItems = lockDocs
         .map(item => ({
           ...item,
           shippingLists: [],
         }))
+
+      if (locked === 'false') {
+        lockItems = []
+      }
 
       allData = [...data, ...lockItems]
       finalTotal = total + lockItems.length

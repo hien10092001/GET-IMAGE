@@ -112,13 +112,21 @@ router.post('/', authMiddleware, async (req, res) => {
         date, shift, createdBy: req.user.username, items: items || [],
       })
     }
-    if (containerIds && containerIds.length) {
-      await Container.updateMany(
-        { _id: { $in: containerIds } },
-        { $set: { locked: true } }
-      )
-    }
     if (items && items.length) {
+      if (containerIds && containerIds.length) {
+        await Container.updateMany(
+          { _id: { $in: containerIds } },
+          { $set: { locked: true } }
+        )
+      } else {
+        const containerNos = [...new Set(items.map(i => i.containerNo).filter(Boolean))]
+        if (containerNos.length) {
+          await Container.updateMany(
+            { containerNo: { $in: containerNos } },
+            { $set: { locked: true } }
+          )
+        }
+      }
       updateShippingListFromLock(items, date).catch(err => console.error('updateShippingListFromLock error:', err))
     }
     res.status(201).json(lock)
@@ -139,6 +147,13 @@ router.put('/:id/items', authMiddleware, async (req, res) => {
     lock.items = mergeItems(lock.items, items)
     await lock.save()
     if (items && items.length) {
+      const containerNos = [...new Set(items.map(i => i.containerNo).filter(Boolean))]
+      if (containerNos.length) {
+        await Container.updateMany(
+          { containerNo: { $in: containerNos } },
+          { $set: { locked: true } }
+        )
+      }
       updateShippingListFromLock(items, lock.date).catch(err => console.error('updateShippingListFromLock error:', err))
     }
     res.json(lock)
