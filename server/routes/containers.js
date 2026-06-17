@@ -97,7 +97,7 @@ router.get('/', authMiddleware, async (req, res) => {
       })
     })
 
-    const data = containers.map(c => ({
+    let data = containers.map(c => ({
       ...c,
       shippingLists: containerListMap[c.containerNo] || [],
       _source: 'container',
@@ -148,8 +148,13 @@ router.get('/', authMiddleware, async (req, res) => {
         lockItems = []
       }
 
+      if (lockItems.length) {
+        const lockNos = new Set(lockItems.map(i => i.containerNo))
+        data = data.filter(c => !lockNos.has(c.containerNo))
+      }
+
       allData = [...data, ...lockItems]
-      finalTotal = total + lockItems.length
+      finalTotal = data.length + lockItems.length
     }
 
     res.json({
@@ -305,9 +310,12 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
       lockResult = await ProductionLock.aggregate(lockPipeline).catch(() => [])
     }
 
-    // Merge both results
+    // Merge both results (mirror dedup logic: exclude Container count if containerNo also in ProductionLock)
+    const lockNos = new Set(lockResult.map(r => r._id))
     const map = {}
-    containerResult.forEach(r => { map[r._id] = r.count })
+    containerResult.forEach(r => {
+      if (!lockNos.has(r._id)) map[r._id] = r.count
+    })
     lockResult.forEach(r => { map[r._id] = (map[r._id] || 0) + r.count })
 
     res.json(map)
