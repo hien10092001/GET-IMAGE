@@ -138,10 +138,29 @@ router.get('/', authMiddleware, async (req, res) => {
         { $sort: { lockDate: -1 } },
       ]).catch(() => [])
 
+      const lockContainerNos = [...new Set(lockDocs.map(i => i.containerNo))]
+      const lockListMap = {}
+      if (lockContainerNos.length) {
+        const lockShippingLists = await ShippingList.find(
+          { 'items.containerNo': { $in: lockContainerNos } },
+          { name: 1, 'items.containerNo': 1 }
+        ).lean()
+        lockShippingLists.forEach(sl => {
+          sl.items.forEach(item => {
+            if (!lockListMap[item.containerNo]) {
+              lockListMap[item.containerNo] = []
+            }
+            if (!lockListMap[item.containerNo].some(l => l._id.equals(sl._id))) {
+              lockListMap[item.containerNo].push({ _id: sl._id, name: sl.name })
+            }
+          })
+        })
+      }
+
       let lockItems = lockDocs
         .map(item => ({
           ...item,
-          shippingLists: [],
+          shippingLists: lockListMap[item.containerNo] || [],
         }))
 
       if (locked === 'false') {
