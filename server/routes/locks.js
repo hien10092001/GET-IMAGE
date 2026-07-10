@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import ProductionLock from '../models/ProductionLock.js'
 import Container from '../models/Container.js'
+import Depot from '../models/Depot.js'
 import ShippingList from '../models/ShippingList.js'
 import Classification from '../models/Classification.js'
 import { authMiddleware } from '../middleware/auth.js'
@@ -98,7 +99,7 @@ function mergeItems(existing, incoming) {
 // POST /api/locks — create or update a lock (upsert by date+shift)
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { date, shift, items, containerIds } = req.body
+    const { date, shift, items, containerIds, depotIds } = req.body
     if (!date || !shift) {
       return res.status(400).json({ message: 'Thiếu ngày hoặc ca' })
     }
@@ -113,7 +114,12 @@ router.post('/', authMiddleware, async (req, res) => {
       })
     }
     if (items && items.length) {
-      if (containerIds && containerIds.length) {
+      if (depotIds && depotIds.length) {
+        await Depot.updateMany(
+          { _id: { $in: depotIds } },
+          { $set: { locked: true } }
+        )
+      } else if (containerIds && containerIds.length) {
         await Container.updateMany(
           { _id: { $in: containerIds } },
           { $set: { locked: true } }

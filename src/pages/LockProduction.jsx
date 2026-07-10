@@ -189,6 +189,7 @@ function LockProduction() {
         bay: addBay,
         location: addLocation,
         remark: addRemark,
+        source: 'manual',
       }
       const res = await api.put(`/locks/${currentLock._id}/items`, { items: [newItem] })
       setCurrentLock(res.data)
@@ -591,6 +592,13 @@ function LockProduction() {
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo' },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 100 },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 80 },
+    { title: 'Nguồn', dataIndex: 'source', key: 'source', width: 80,
+      render: v => {
+        if (v === 'depot') return <Tag color="purple">Depot</Tag>
+        if (v === 'container') return <Tag color="blue">Container</Tag>
+        return <Tag color="default">Manual</Tag>
+      },
+    },
     { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 100 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },
@@ -675,6 +683,13 @@ function LockProduction() {
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 160 },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 140 },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 80 },
+    { title: 'Nguồn', dataIndex: 'source', key: 'source', width: 80,
+      render: v => {
+        if (v === 'depot') return <Tag color="purple">Depot</Tag>
+        if (v === 'container') return <Tag color="blue">Container</Tag>
+        return <Tag color="default">Manual</Tag>
+      },
+    },
     { title: 'Phân Loại', dataIndex: 'location', key: 'location', width: 120 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 80 },

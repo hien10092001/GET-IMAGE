@@ -5,6 +5,7 @@ import mongoose from 'mongoose'
 import todoRoutes from './routes/todos.js'
 import authRoutes from './routes/auth.js'
 import containerRoutes from './routes/containers.js'
+import depotRoutes from './routes/depots.js'
 import lockRoutes from './routes/locks.js'
 import shippingListRoutes from './routes/shippingLists.js'
 import classificationRoutes from './routes/classification.js'
@@ -21,6 +22,7 @@ app.use(express.json({ limit: '50mb' }))
 app.use('/api/todos', todoRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/containers', containerRoutes)
+app.use('/api/depots', depotRoutes)
 app.use('/api/locks', lockRoutes)
 app.use('/api/shipping-lists', shippingListRoutes)
 app.use('/api/classification', classificationRoutes)

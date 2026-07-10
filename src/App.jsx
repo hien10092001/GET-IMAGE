@@ -1,7 +1,7 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
@@ -65,6 +65,7 @@ function App() {
     containers: '#eb2f96',
     sanluong: '#13c2c2',
     imagecheck: '#fa8c16',
+    depots: '#722ed1',
   }
 
   const handleLogin = (userData) => setUser(userData)
@@ -91,6 +92,7 @@ function App() {
       label: <span>DS CONTAINER</span>,
       children: [
         { key: 'containers', icon: <ContainerOutlined style={{ color: tabColors.containers }} />, label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}>Containers</span> },
+        { key: 'depots', icon: <ShopOutlined style={{ color: tabColors.depots }} />, label: <span style={{ color: activeTab === 'depots' ? tabColors.depots : undefined }}>Depot</span> },
         { key: 'sanluong', icon: <LockOutlined style={{ color: tabColors.sanluong }} />, label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}>Sản lượng</span> },
       ]
     },  
@@ -183,7 +185,7 @@ function App() {
             {activeTab === 'dedup' && <ExcelDeduplicator />}
             {activeTab === 'compress' && <ImageCompressor />}
             {activeTab === 'rename' && <RenameSubdirs />}
-            {(activeTab === 'containers' || activeTab === 'sanluong') && (
+            {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
             {activeTab === 'imagecheck' && (

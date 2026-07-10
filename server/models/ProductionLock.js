@@ -7,6 +7,7 @@ const lockItemSchema = new mongoose.Schema({
   bay: { type: String, trim: true },
   location: { type: String, trim: true },
   remark: { type: String, trim: true },
+  source: { type: String, enum: ['depot', 'container', 'manual'], default: 'manual' },
 })
 
 const productionLockSchema = new mongoose.Schema({

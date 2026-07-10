@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import Login from '../pages/Login'
 
 const ContainerManagement = lazy(() => import('../pages/ContainerManagement'))
+const DepotsManagement = lazy(() => import('../pages/DepotManagement'))
 const LockProduction = lazy(() => import('../pages/LockProduction'))
 
 function ProtectedPages({ activeTab, user, onLogin }) {
@@ -16,6 +17,7 @@ function ProtectedPages({ activeTab, user, onLogin }) {
   return (
     <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
       {activeTab === 'containers' && <ContainerManagement />}
+      {activeTab === 'depots' && <DepotsManagement />}
       {activeTab === 'sanluong' && <LockProduction />}
     </Suspense>
   )

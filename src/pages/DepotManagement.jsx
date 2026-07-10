@@ -26,7 +26,7 @@ function ContainerManagement() {
   const [viewItem, setViewItem] = useState(null)
   const [viewRefOpen, setViewRefOpen] = useState(false)
   const [referenceData, setReferenceData] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('containerRef') || '[]') } catch { return [] }
+    try { return JSON.parse(localStorage.getItem('depotRef') || '[]') } catch { return [] }
   })
   const [selectedExportFields, setSelectedExportFields] = useState({
     containerNo: true,
@@ -106,7 +106,7 @@ function ContainerManagement() {
   const [lockEditForm] = Form.useForm()
 
   useEffect(() => {
-    localStorage.setItem('containerRef', JSON.stringify(referenceData))
+    localStorage.setItem('depotRef', JSON.stringify(referenceData))
   }, [referenceData])
 
   useEffect(() => {
@@ -138,7 +138,7 @@ function ContainerManagement() {
       params.dateFrom = dateRange[0].format('YYYY-MM-DD')
       params.dateTo = dateRange[1].format('YYYY-MM-DD')
     }
-    api.get('/containers', { params }).then((res) => {
+    api.get('/depots', { params }).then((res) => {
       setData(res.data.data)
       setTotal(res.data.total)
     }).catch(() => {
@@ -160,13 +160,13 @@ function ContainerManagement() {
       params.dateFrom = dateRange[0].format('YYYY-MM-DD')
       params.dateTo = dateRange[1].format('YYYY-MM-DD')
     }
-    api.get('/containers/frequencies', { params }).then(res => {
+    api.get('/depots/frequencies', { params }).then(res => {
       setFrequencies(res.data)
     }).catch(() => {})
   }
 
   const fetchLocationHistory = () => {
-    api.get('/containers/locations').then(res => setLocationHistory(res.data)).catch(() => {})
+    api.get('/depots/locations').then(res => setLocationHistory(res.data)).catch(() => {})
   }
 
   useEffect(() => {
@@ -208,7 +208,7 @@ function ContainerManagement() {
         hinhIn: addHinhIn,
         hinhSC: addHinhSC,
       }
-      const res = await api.post('/containers', payload)
+      const res = await api.post('/depots', payload)
       message.success('Đã thêm container')
       setAddContainerNo('')
       setAddShippingLine('')
@@ -236,7 +236,7 @@ function ContainerManagement() {
         ...values,
         createdAt: values.createdAt ? values.createdAt.toISOString() : undefined,
       }
-      await api.put(`/containers/${editing._id}`, payload)
+      await api.put(`/depots/${editing._id}`, payload)
       message.success('Cập nhật thành công')
       setModalOpen(false)
       fetchData()
@@ -250,7 +250,7 @@ function ContainerManagement() {
 
   const handleDelete = async (id) => {
     try {
-      await api.delete(`/containers/${id}`)
+      await api.delete(`/depots/${id}`)
       message.success('Đã xóa container')
       fetchData()
       fetchFrequencies()
@@ -261,7 +261,7 @@ function ContainerManagement() {
 
   const handleDeleteAll = async () => {
     try {
-      const res = await api.delete('/containers/all')
+      const res = await api.delete('/depots/all')
       message.success(res.data.message)
       setData([])
       setTotal(0)
@@ -334,7 +334,7 @@ function ContainerManagement() {
       if (scMatch !== !!item.hinhSC) updates.hinhSC = scMatch
       if (Object.keys(updates).length) {
         try {
-          await api.put(`/containers/${item._id}`, updates)
+          await api.put(`/depots/${item._id}`, updates)
           return 1
         } catch {}
       }
@@ -467,7 +467,7 @@ function ContainerManagement() {
     try {
       const results = await Promise.allSettled([
         api.get(`/locks/container-data/${containerNo}`),
-        api.get(`/containers/by-number/${containerNo}`),
+        api.get(`/depots/by-number/${containerNo}`),
       ])
       results[0].status === 'fulfilled' && results[0].value.data?.forEach(item => { if (item.location) locations.add(item.location) })
       results[1].status === 'fulfilled' && results[1].value.data?.forEach(item => { if (item.location) locations.add(item.location) })
@@ -529,7 +529,7 @@ function ContainerManagement() {
       if (suggestionQueryRef.current !== containerNo) return
       const results = await Promise.allSettled([
         api.get(`/locks/container-data/${containerNo}`),
-        api.get(`/containers/by-number/${containerNo}`),
+        api.get(`/depots/by-number/${containerNo}`),
       ])
       const lockRes = results[0].status === 'fulfilled' ? results[0].value : null
       const containerRes = results[1].status === 'fulfilled' ? results[1].value : null
@@ -630,7 +630,7 @@ function ContainerManagement() {
         params.dateFrom = dateRange[0].format('YYYY-MM-DD')
         params.dateTo = dateRange[1].format('YYYY-MM-DD')
       }
-      const res = await api.get('/containers/all', { params })
+      const res = await api.get('/depots/all', { params })
       const data = res.data.map((c, i) => ({
         STT: i + 1,
         'Container No': c.containerNo,
@@ -688,7 +688,7 @@ function ContainerManagement() {
       if (filters.remark) params.remark = filters.remark
       if (filters.locked) params.locked = filters.locked
       params.limit = total
-      const res = await api.get('/containers', { params })
+      const res = await api.get('/depots', { params })
       const items = res.data.data.map(c => ({
         containerNo: c.containerNo,
         shippingLine: c.shippingLine,
@@ -696,11 +696,11 @@ function ContainerManagement() {
         bay: c.bay || '',
         location: c.location || '',
         remark: c.remark || '',
-        source: 'container',
+        source: 'depot',
       }))
-      const containerIds = res.data.data.map(c => c._id)
+      const depotIds = res.data.data.map(c => c._id)
       if (!items.length) { message.warning('Không có dữ liệu để chốt'); return }
-      await api.post('/locks', { date: lockDate, shift: lockShift, items, containerIds })
+      await api.post('/locks', { date: lockDate, shift: lockShift, items, depotIds })
       message.success(`Đã chốt ${items.length} container vào ca ${lockShift} ngày ${dayjs(lockDate).format('DD/MM/YYYY')}`)
       setLockModalOpen(false)
       fetchData()
@@ -874,12 +874,12 @@ function ContainerManagement() {
                     createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
                   })).filter(i => i.containerNo && i.shippingLine && i.size)
                   if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
-                  const results = await Promise.allSettled(items.map(i => api.post('/containers', i)))
+                  const results = await Promise.allSettled(items.map(i => api.post('/depots', i)))
                   const added = results.filter(r => r.status === 'fulfilled').length
                   const skipped = items.length - added
                   if (added) {
                     message.success(`Đã thêm ${added} container${skipped ? `, ${skipped} bỏ qua (đã tồn tại)` : ''} từ Excel`)
-                    const countRes = await api.get('/containers', { params: { limit: 1, sort: 'createdAt' } })
+                    const countRes = await api.get('/depots', { params: { limit: 1, sort: 'createdAt' } })
                     const lastPage = Math.ceil(countRes.data.total / pageSize)
                     setPage(lastPage)
                     fetchData(lastPage)
