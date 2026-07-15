@@ -700,7 +700,7 @@ function ContainerManagement() {
       }))
       const depotIds = res.data.data.map(c => c._id)
       if (!items.length) { message.warning('Không có dữ liệu để chốt'); return }
-      await api.post('/locks', { date: lockDate, shift: lockShift, items, depotIds })
+      await api.post('/locks', { date: lockDate, shift: lockShift, items, depotIds, type: 'depot' })
       message.success(`Đã chốt ${items.length} container vào ca ${lockShift} ngày ${dayjs(lockDate).format('DD/MM/YYYY')}`)
       setLockModalOpen(false)
       fetchData()

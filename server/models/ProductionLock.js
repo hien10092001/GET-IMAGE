@@ -13,10 +13,11 @@ const lockItemSchema = new mongoose.Schema({
 const productionLockSchema = new mongoose.Schema({
   date: { type: String, required: true },
   shift: { type: String, enum: ['sáng', 'tối'], required: true },
+  type: { type: String, enum: ['container', 'depot'], default: 'container' },
   items: [lockItemSchema],
   createdBy: { type: String, default: 'system' },
 }, { timestamps: true })
 
-productionLockSchema.index({ date: 1, shift: 1 }, { unique: true })
+productionLockSchema.index({ date: 1, shift: 1, type: 1 }, { unique: true })
 
 export default mongoose.model('ProductionLock', productionLockSchema)

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined, ContainerOutlined, ShopOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -45,6 +45,7 @@ function LockProduction() {
   const [filterShift, setFilterShift] = useState('')
   const [filterShippingLine, setFilterShippingLine] = useState('')
   const [filterSize, setFilterSize] = useState('')
+  const [lockType, setLockType] = useState('container')
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewItems, setPreviewItems] = useState([])
   const [previewSource, setPreviewSource] = useState(null)
@@ -143,6 +144,7 @@ function LockProduction() {
     if (filterShift) params.shift = filterShift
     if (filterShippingLine) params.shippingLine = filterShippingLine
     if (filterSize) params.size = filterSize
+    params.type = lockType
     api.get('/locks', { params }).then(res => {
       setLocks(res.data)
     }).catch(() => {
@@ -150,7 +152,7 @@ function LockProduction() {
     }).finally(() => setLoading(false))
   }
 
-  useEffect(() => { fetchLocks() }, [search, filterDateRange, filterShift, filterShippingLine, filterSize])
+  useEffect(() => { fetchLocks() }, [search, filterDateRange, filterShift, filterShippingLine, filterSize, lockType])
 
   const handleLock = async () => {
     try {
@@ -160,7 +162,7 @@ function LockProduction() {
         setDetailOpen(true)
         return
       }
-      const res = await api.post('/locks', { date: lockDate, shift: lockShift, items: [] })
+      const res = await api.post('/locks', { date: lockDate, shift: lockShift, items: [], type: lockType })
       message.success(`Đã chốt sản lượng ca ${lockShift} ngày ${lockDate}`)
       fetchLocks()
       setCurrentLock(res.data)
@@ -319,7 +321,7 @@ function LockProduction() {
         if (existing) {
           await api.put(`/locks/${existing._id}/items`, { items: previewItems })
         } else {
-          const res = await api.post('/locks', { date: previewSource.date, shift: previewSource.shift, items: previewItems })
+          const res = await api.post('/locks', { date: previewSource.date, shift: previewSource.shift, items: previewItems, type: lockType })
           setCurrentLock(res.data)
           setDetailOpen(true)
         }
@@ -839,11 +841,29 @@ function LockProduction() {
 
       <Card className="mb-4">
         <Tabs
-          defaultActiveKey="san-luong"
+          activeKey={lockType === 'container' ? 'san-luong-container' : 'san-luong-depot'}
+          onChange={key => {
+            if (key === 'san-luong-container') setLockType('container')
+            else if (key === 'san-luong-depot') setLockType('depot')
+          }}
           items={[
             {
-              key: 'san-luong',
-              label: <span><LockOutlined /> Sản lượng</span>,
+              key: 'san-luong-container',
+              label: <span><ContainerOutlined /> Sản lượng Container</span>,
+              children: (
+                <Table
+                  columns={addColumns}
+                  dataSource={locks}
+                  rowKey="_id"
+                  loading={loading}
+                  scroll={{ x: 700 }}
+                  pagination={{ pageSize: 10, showTotal: t => `Tổng ${t} phiếu` }}
+                />
+              ),
+            },
+            {
+              key: 'san-luong-depot',
+              label: <span><ShopOutlined /> Sản lượng Depot</span>,
               children: (
                 <Table
                   columns={addColumns}

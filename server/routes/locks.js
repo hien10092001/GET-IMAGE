@@ -64,7 +64,7 @@ const router = Router()
 // GET /api/locks — list all locks, with optional filters
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { date, dateFrom, dateTo, shift, search, shippingLine, size, location } = req.query
+    const { date, dateFrom, dateTo, shift, search, shippingLine, size, location, type } = req.query
     const query = {}
     if (date) {
       query.date = date
@@ -74,6 +74,7 @@ router.get('/', authMiddleware, async (req, res) => {
       if (dateTo) query.date.$lte = dateTo
     }
     if (shift) query.shift = shift
+    if (type) query.type = type
     if (search) query['items.containerNo'] = { $regex: search, $options: 'i' }
     if (shippingLine) query['items.shippingLine'] = { $regex: shippingLine, $options: 'i' }
     if (size) query['items.size'] = { $regex: size, $options: 'i' }
@@ -99,18 +100,19 @@ function mergeItems(existing, incoming) {
 // POST /api/locks — create or update a lock (upsert by date+shift)
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { date, shift, items, containerIds, depotIds } = req.body
+    const { date, shift, items, containerIds, depotIds, type } = req.body
     if (!date || !shift) {
       return res.status(400).json({ message: 'Thiếu ngày hoặc ca' })
     }
-    let lock = await ProductionLock.findOne({ date, shift })
+    const lockType = type || (depotIds?.length ? 'depot' : 'container')
+    let lock = await ProductionLock.findOne({ date, shift, type: lockType })
     if (lock) {
       lock.items = mergeItems(lock.items, items || [])
       lock.createdBy = req.user.username
       await lock.save()
     } else {
       lock = await ProductionLock.create({
-        date, shift, createdBy: req.user.username, items: items || [],
+        date, shift, type: lockType, createdBy: req.user.username, items: items || [],
       })
     }
     if (items && items.length) {
