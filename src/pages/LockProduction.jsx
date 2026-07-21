@@ -46,6 +46,7 @@ function LockProduction() {
   const [filterShippingLine, setFilterShippingLine] = useState('')
   const [filterSize, setFilterSize] = useState('')
   const [lockType, setLockType] = useState('container')
+  const [sanLuongTab, setSanLuongTab] = useState('san-luong-container')
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewItems, setPreviewItems] = useState([])
   const [previewSource, setPreviewSource] = useState(null)
@@ -841,8 +842,9 @@ function LockProduction() {
 
       <Card className="mb-4">
         <Tabs
-          activeKey={lockType === 'container' ? 'san-luong-container' : 'san-luong-depot'}
+          activeKey={sanLuongTab}
           onChange={key => {
+            setSanLuongTab(key)
             if (key === 'san-luong-container') setLockType('container')
             else if (key === 'san-luong-depot') setLockType('depot')
           }}
