@@ -267,65 +267,97 @@ function ExcelMatcher() {
   const findMatches = async () => {
     if (!sourceDir || excelData.length === 0) return
 
-    setStatus('Đang quét toàn bộ thư mục...')
+    setStatus('Đang quét thư mục...')
     const matches = []
     const foundCodes = new Set()
-    const codesSet = new Set(excelData)
+    let lastUpdate = Date.now()
+
+    const onProgress = (count) => {
+      const now = Date.now()
+      if (now - lastUpdate > 300) {
+        lastUpdate = now
+        setStatus(`Đang quét... ${count} thư mục | ${foundCodes.size}/${excelData.length} mã tìm thấy`)
+      }
+    }
 
     try {
-      const codeList = excelData
-      await scanDirectory(sourceDir, '', codesSet, matches, foundCodes, null, codeList)
+      const counter = { dirsScanned: 0 }
+      const unfoundCodes = new Set(excelData)
+      await scanDirectory(sourceDir, '', matches, foundCodes, unfoundCodes, null, counter, onProgress)
 
       const notFound = excelData.filter(code => !foundCodes.has(code))
       setNotFoundCodes(notFound)
       setMatchedFiles(matches)
       setSelectedFiles(new Set(matches.map((_, i) => i)))
-      setStatus(`Tìm thấy ${matches.length} file/folder trùng khớp`)
+      setStatus(`Tìm thấy ${matches.length} file/folder trùng khớp trong ${counter.dirsScanned} thư mục`)
     } catch (err) {
       setStatus('Lỗi quét thư mục: ' + err.message)
     }
   }
 
-  const scanDirectory = async (dirHandle, path, codesSet, matches, foundCodes, parentHandle, codeList) => {
+  const scanDirectory = async (dirHandle, path, matches, foundCodes, unfoundCodes, parentHandle, counter, onProgress) => {
+    if (unfoundCodes.size === 0) return
+
     const entries = []
     for await (const [name, handle] of dirHandle.entries()) {
       entries.push({ name, handle })
     }
 
-    const dirs = []
+    const subDirs = []
     for (const { name, handle } of entries) {
-      const fullPath = path ? `${path}/${name}` : name
+      if (unfoundCodes.size === 0) break
+
       const nameUpper = name.toUpperCase()
 
-      if (codesSet.has(nameUpper) || codeList.some(code => nameUpper.includes(code))) {
+      let matched = unfoundCodes.has(nameUpper)
+      if (!matched) {
+        for (const code of unfoundCodes) {
+          if (nameUpper.includes(code)) { matched = true; break }
+        }
+      }
+
+      if (matched) {
+        const fullPath = path ? `${path}/${name}` : name
         matches.push({ name, handle, fullPath, parentHandle: parentHandle || dirHandle })
-        for (const code of codeList) {
+        for (const code of unfoundCodes) {
           if (nameUpper === code || nameUpper.includes(code)) {
             foundCodes.add(code)
+            unfoundCodes.delete(code)
           }
         }
       } else if (handle.kind === 'directory') {
-        dirs.push({ name, handle })
+        subDirs.push({ name, handle })
       }
     }
 
-    await Promise.all(dirs.map(d =>
-      scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, codesSet, matches, foundCodes, dirHandle, codeList)
-    ))
+    counter.dirsScanned++
+    if (counter.dirsScanned % 5 === 0) onProgress(counter.dirsScanned)
+
+    const CONCURRENCY = 8
+    for (let i = 0; i < subDirs.length; i += CONCURRENCY) {
+      if (unfoundCodes.size === 0) break
+      const batch = subDirs.slice(i, i + CONCURRENCY)
+      await Promise.all(batch.map(d =>
+        scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, matches, foundCodes, unfoundCodes, dirHandle, counter, onProgress)
+      ))
+    }
   }
 
-  const copyOneEntry = async ({ name, handle, parentHandle }) => {
-    if (handle.kind === 'file') {
-      const file = await handle.getFile()
-      const newFileHandle = await destDir.getFileHandle(name, { create: true })
-      const writable = await newFileHandle.createWritable()
-      await writable.write(file)
-      await writable.close()
-      if (deleteAfterCopy) await parentHandle.removeEntry(name)
-    } else if (handle.kind === 'directory') {
-      await copyDirectory(handle, await destDir.getDirectoryHandle(name, { create: true }))
-      if (deleteAfterCopy) await parentHandle.removeEntry(name, { recursive: true })
+  const collectAllFiles = async (entry, destDirHandle) => {
+    const files = []
+    if (entry.handle.kind === 'file') {
+      files.push({ srcHandle: entry.handle, destDirHandle, fileName: entry.name })
+    } else if (entry.handle.kind === 'directory') {
+      const newDir = await destDirHandle.getDirectoryHandle(entry.name, { create: true })
+      const entries = []
+      for await (const [name, handle] of entry.handle.entries()) {
+        entries.push({ name, handle })
+      }
+      for (const e of entries) {
+        files.push(...await collectAllFiles({ ...e, parentHandle: entry.handle }, newDir))
+      }
     }
+    return files
   }
 
   const copyFiles = async () => {
@@ -337,18 +369,53 @@ function ExcelMatcher() {
       return
     }
 
-    setStatus('Đang chuyển file...')
     try {
-      setProgress({ current: 0, total: toCopy.length })
+      setStatus('Đang đếm file...')
+      setProgress({ current: 0, total: 0 })
 
-      for (let i = 0; i < toCopy.length; i += COPY_CONCURRENCY) {
-        const batch = toCopy.slice(i, i + COPY_CONCURRENCY)
-        await Promise.all(batch.map(copyOneEntry))
-        setProgress({ current: Math.min(i + COPY_CONCURRENCY, toCopy.length), total: toCopy.length })
-        setStatus(`Đang chuyển ${Math.min(i + COPY_CONCURRENCY, toCopy.length)}/${toCopy.length}...`)
+      const allFiles = []
+      for (const entry of toCopy) {
+        const files = await collectAllFiles(entry, destDir)
+        allFiles.push(...files)
       }
 
-      setStatus(`Hoàn thành! Đã chuyển tất cả file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
+      if (allFiles.length === 0) {
+        setStatus('Không có file nào để chuyển!')
+        return
+      }
+
+      let copied = 0
+      const total = allFiles.length
+      setProgress({ current: 0, total })
+      setStatus(`Đang chuyển 0/${total} file...`)
+
+      const BATCH = 20
+      for (let i = 0; i < allFiles.length; i += BATCH) {
+        const batch = allFiles.slice(i, i + BATCH)
+        await Promise.all(batch.map(async ({ srcHandle, destDirHandle, fileName }) => {
+          const file = await srcHandle.getFile()
+          const fh = await destDirHandle.getFileHandle(fileName, { create: true })
+          const w = await fh.createWritable()
+          await w.write(file)
+          await w.close()
+        }))
+        copied = Math.min(i + BATCH, total)
+        setProgress({ current: copied, total })
+        if (copied % 100 === 0 || copied === total) {
+          setStatus(`Đang chuyển ${copied}/${total} file...`)
+        }
+      }
+
+      if (deleteAfterCopy) {
+        setStatus('Đang xóa file nguồn...')
+        for (const entry of toCopy) {
+          try {
+            await entry.parentHandle.removeEntry(entry.name, { recursive: true })
+          } catch {}
+        }
+      }
+
+      setStatus(`Hoàn thành! Đã chuyển ${total} file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
       setMatchedFiles([])
       setSelectedFiles(new Set())
       setNotFoundCodes([])
@@ -357,10 +424,6 @@ function ExcelMatcher() {
       setStatus('Lỗi chuyển: ' + err.message)
       setProgress({ current: 0, total: 0 })
     }
-  }
-
-  const copyDirectory = async (srcDirHandle, destDirHandle) => {
-    await copyDirectoryContents(srcDirHandle, destDirHandle)
   }
 
   return (
