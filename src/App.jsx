@@ -345,6 +345,7 @@ function ExcelMatcher() {
 
   const collectAllFiles = async (entry, destDirHandle) => {
     const files = []
+    const errors = []
     if (entry.handle.kind === 'file') {
       files.push({ srcHandle: entry.handle, destDirHandle, fileName: entry.name })
     } else if (entry.handle.kind === 'directory') {
@@ -354,10 +355,16 @@ function ExcelMatcher() {
         entries.push({ name, handle })
       }
       for (const e of entries) {
-        files.push(...await collectAllFiles({ ...e, parentHandle: entry.handle }, newDir))
+        try {
+          const result = await collectAllFiles({ ...e, parentHandle: entry.handle }, newDir)
+          files.push(...result.files)
+          errors.push(...result.errors)
+        } catch (err) {
+          errors.push({ path: e.name, error: err.message })
+        }
       }
     }
-    return files
+    return { files, errors }
   }
 
   const copyFiles = async () => {
@@ -374,48 +381,75 @@ function ExcelMatcher() {
       setProgress({ current: 0, total: 0 })
 
       const allFiles = []
+      const collectErrors = []
       for (const entry of toCopy) {
-        const files = await collectAllFiles(entry, destDir)
-        allFiles.push(...files)
+        const result = await collectAllFiles(entry, destDir)
+        allFiles.push(...result.files)
+        collectErrors.push(...result.errors)
       }
 
-      if (allFiles.length === 0) {
+      if (allFiles.length === 0 && collectErrors.length === 0) {
         setStatus('Không có file nào để chuyển!')
         return
       }
 
+      if (allFiles.length === 0 && collectErrors.length > 0) {
+        setStatus(`Không thể đọc ${collectErrors.length} file/thư mục: ${collectErrors[0].error}`)
+        return
+      }
+
       let copied = 0
+      let failed = 0
       const total = allFiles.length
+      const copyErrors = []
       setProgress({ current: 0, total })
       setStatus(`Đang chuyển 0/${total} file...`)
 
       const BATCH = 20
       for (let i = 0; i < allFiles.length; i += BATCH) {
         const batch = allFiles.slice(i, i + BATCH)
-        await Promise.all(batch.map(async ({ srcHandle, destDirHandle, fileName }) => {
+        const results = await Promise.allSettled(batch.map(async ({ srcHandle, destDirHandle, fileName }) => {
           const file = await srcHandle.getFile()
           const fh = await destDirHandle.getFileHandle(fileName, { create: true })
           const w = await fh.createWritable()
-          await w.write(file)
-          await w.close()
+          try {
+            await w.write(file)
+          } finally {
+            await w.close()
+          }
         }))
-        copied = Math.min(i + BATCH, total)
-        setProgress({ current: copied, total })
-        if (copied % 100 === 0 || copied === total) {
-          setStatus(`Đang chuyển ${copied}/${total} file...`)
-        }
+        results.forEach((r, idx) => {
+          if (r.status === 'fulfilled') copied++
+          else { failed++; copyErrors.push({ fileName: batch[idx].fileName, error: r.reason?.message }) }
+        })
+        setProgress({ current: copied + failed, total })
+        setStatus(`Đang chuyển ${copied + failed}/${total} file (${failed > 0 ? failed + ' lỗi' : 'OK'})...`)
       }
 
       if (deleteAfterCopy) {
         setStatus('Đang xóa file nguồn...')
+        let deleteErrors = 0
         for (const entry of toCopy) {
           try {
             await entry.parentHandle.removeEntry(entry.name, { recursive: true })
-          } catch {}
+          } catch {
+            deleteErrors++
+          }
         }
+        if (deleteErrors > 0) {
+          setStatus(`Hoàn thành! Đã chuyển ${copied}/${total} file. Không xóa được ${deleteErrors} mục nguồn.`)
+        } else {
+          setStatus(`Hoàn thành! Đã chuyển ${copied} file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
+        }
+      } else {
+        const errDetail = copyErrors.length > 0 ? ` (${copyErrors.length} lỗi)` : ''
+        setStatus(`Hoàn thành! Đã chuyển ${copied}/${total} file vào thư mục đích${errDetail}.`)
       }
 
-      setStatus(`Hoàn thành! Đã chuyển ${total} file vào thư mục đích${deleteAfterCopy ? ' và xóa khỏi thư mục tổng' : ''}.`)
+      if (copyErrors.length > 0) {
+        console.error('Copy errors:', copyErrors)
+      }
+
       setMatchedFiles([])
       setSelectedFiles(new Set())
       setNotFoundCodes([])
