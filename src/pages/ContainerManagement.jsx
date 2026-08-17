@@ -488,6 +488,29 @@ function ContainerManagement() {
       modalSuggestionQueryRef.current = val
       modalSuggestionTimerRef.current = setTimeout(async () => {
         const q = modalSuggestionQueryRef.current
+        const curSL = form.getFieldValue('shippingLine')
+        const curSize = form.getFieldValue('size')
+        if (!curSL || !curSize) {
+          try {
+            const results = await Promise.allSettled([
+              api.get(`/locks/container-data/${val}`),
+              api.get(`/containers/by-number/${val}`),
+            ])
+            if (modalSuggestionQueryRef.current !== q) return
+            if (!curSL) {
+              const slFromLock = results[0].status === 'fulfilled' && results[0].value.data?.find(d => d.shippingLine)?.shippingLine
+              const slFromCont = results[1].status === 'fulfilled' && results[1].value.data?.find(d => d.shippingLine)?.shippingLine
+              if (slFromLock) form.setFieldValue('shippingLine', slFromLock)
+              else if (slFromCont) form.setFieldValue('shippingLine', slFromCont)
+            }
+            if (!curSize) {
+              const szFromLock = results[0].status === 'fulfilled' && results[0].value.data?.find(d => d.size)?.size
+              const szFromCont = results[1].status === 'fulfilled' && results[1].value.data?.find(d => d.size)?.size
+              if (szFromLock) form.setFieldValue('size', szFromLock)
+              else if (szFromCont) form.setFieldValue('size', szFromCont)
+            }
+          } catch {}
+        }
         const locs = await fetchLocationSources(val)
         if (modalSuggestionQueryRef.current !== q) return
         setModalLocationOptions(locs)
@@ -515,6 +538,12 @@ function ContainerManagement() {
       setAddHinhIn(false)
       setAddHinhSC(false)
       return
+    }
+    const refMatch = referenceData.find(r => r.containerNo === v)
+    if (refMatch) {
+      if (refMatch.shippingLine) setAddShippingLine(refMatch.shippingLine)
+      if (refMatch.size) setAddSize(refMatch.size)
+      if (refMatch.bay) setAddBay(ensureBayPrefix(refMatch.bay))
     }
     clearTimeout(suggestionTimerRef.current)
     if (v.length >= 3) {
@@ -864,15 +893,27 @@ function ContainerManagement() {
                     if (!isNaN(d.getTime())) return d.toISOString()
                     return undefined
                   }
-                  const items = rows.slice(1).filter(r => r[ci]).map(r => ({
-                    containerNo: String(r[ci]).toUpperCase().trim(),
-                    shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
-                    size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
-                    location: li >= 0 && r[li] ? String(r[li]).trim() : '',
-                    bay: bi >= 0 && r[bi] ? ensureBayPrefix(String(r[bi])) : '',
-                    remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
-                    createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
-                  })).filter(i => i.containerNo && i.shippingLine && i.size)
+                  const items = rows.slice(1).filter(r => r[ci]).map(r => {
+                    const cNo = String(r[ci]).toUpperCase().trim()
+                    let sLine = si >= 0 && r[si] ? String(r[si]).trim() : ''
+                    let sz = zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : ''
+                    if (!sLine || !sz) {
+                      const ref = referenceData.find(ref => ref.containerNo === cNo)
+                      if (ref) {
+                        if (!sLine && ref.shippingLine) sLine = ref.shippingLine
+                        if (!sz && ref.size) sz = ref.size
+                      }
+                    }
+                    return {
+                      containerNo: cNo,
+                      shippingLine: sLine,
+                      size: sz,
+                      location: li >= 0 && r[li] ? String(r[li]).trim() : '',
+                      bay: bi >= 0 && r[bi] ? ensureBayPrefix(String(r[bi])) : '',
+                      remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
+                      createdAt: di >= 0 && r[di] ? parseDate(r[di]) : undefined,
+                    }
+                  }).filter(i => i.containerNo)
                   if (!items.length) { message.warning('Không có dữ liệu hợp lệ'); return }
                   const results = await Promise.allSettled(items.map(i => api.post('/containers', i)))
                   const added = results.filter(r => r.status === 'fulfilled').length

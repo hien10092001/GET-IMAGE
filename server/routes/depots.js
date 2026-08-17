@@ -7,8 +7,8 @@ const router = Router()
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
-    if (!containerNo || !shippingLine || !size) {
-      return res.status(400).json({ message: 'Thiếu thông tin bắt buộc' })
+    if (!containerNo) {
+      return res.status(400).json({ message: 'Thiếu Container No' })
     }
     const payload = {
       containerNo: containerNo.toUpperCase(),

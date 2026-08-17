@@ -9,12 +9,12 @@ const containerSchema = new mongoose.Schema({
   },
   shippingLine: {
     type: String,
-    required: true,
+    default: '',
     trim: true,
   },
   size: {
     type: String,
-    required: true,
+    default: '',
   },
   containerType: {
     type: String,
