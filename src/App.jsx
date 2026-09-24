@@ -1,11 +1,12 @@
 import { useState, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
-const ImageCheck = lazy(() => import('./pages/ImageCheck'))
+const ImageCut = lazy(() => import('./pages/ImageCut'))
+const EstTranslator = lazy(() => import('./pages/EstTranslator'))
 
 const { Dragger } = Upload
 const { Title, Text } = Typography
@@ -64,7 +65,8 @@ function App() {
     rename: '#e67e22',
     containers: '#eb2f96',
     sanluong: '#13c2c2',
-    imagecheck: '#fa8c16',
+    cut: '#fa8c16',
+    est: '#2f54eb',
     depots: '#722ed1',
   }
 
@@ -85,7 +87,8 @@ function App() {
     { key: 'compress', icon: <CompressOutlined style={{ color: tabColors.compress }} />, label: <span style={{ color: activeTab === 'compress' ? tabColors.compress : undefined }}>Giảm size hình</span> },
     { key: 'rename', icon: <FolderOpenOutlined style={{ color: tabColors.rename }} />, label: <span style={{ color: activeTab === 'rename' ? tabColors.rename : undefined }}>Đổi tên thư mục</span> },
     
-    { key: 'imagecheck', icon: <FileImageOutlined style={{ color: tabColors.imagecheck }} />, label: <span style={{ color: activeTab === 'imagecheck' ? tabColors.imagecheck : undefined }}>Check Hình</span> },
+    { key: 'cut', icon: <ScissorOutlined style={{ color: tabColors.cut }} />, label: <span style={{ color: activeTab === 'cut' ? tabColors.cut : undefined }}>Cắt hình</span> },
+    { key: 'est', icon: <TranslationOutlined style={{ color: tabColors.est }} />, label: <span style={{ color: activeTab === 'est' ? tabColors.est : undefined }}>Chuyển EST</span> },
 {
       key: containerGroupKey,
       icon: <ContainerOutlined style={{ color: tabColors.containers }} />,
@@ -188,9 +191,14 @@ function App() {
             {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
-            {activeTab === 'imagecheck' && (
+            {activeTab === 'cut' && (
               <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
-                <ImageCheck />
+                <ImageCut />
+              </Suspense>
+            )}
+            {activeTab === 'est' && (
+              <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+                <EstTranslator />
               </Suspense>
             )}
           </Content>
