@@ -409,14 +409,19 @@ function EstTranslator() {
   }
 
   const exportExcel = () => {
-    const rows = exportFiltered.map(r => ({ 'SỐ CONT': r.container, 'Nội dung chuyển ngữ': rowLine(r) }))
+    const rows = exportFiltered.map(r => {
+      const { main, ko } = rowLineSplit(r)
+      return { 'SỐ CONT': r.container, 'Nội dung chuyển ngữ': main, ...(ko ? { 'KO APP': ko } : {}) }
+    })
     const ws = XLSX.utils.json_to_sheet(rows)
-    ws['!cols'] = [{ wch: 20 }, { wch: 120 }]
-    for (let i = 0; i < rows.length; i++) {
-      if (rowLine(exportFiltered[i]).includes('KO APP')) {
-        const ref = XLSX.utils.encode_cell({ r: i + 1, c: 1 })
-        ws[ref].s = { font: { color: { rgb: 'FFFF0000' }, bold: true } }
-      }
+    ws['!cols'] = [{ wch: 20 }, { wch: 120 }, { wch: 60 }]
+    const redBold = { font: { color: { rgb: 'FFFF0000' }, bold: true } }
+    const black = { font: { color: { rgb: 'FF000000' } } }
+    for (let i = 0; i < exportFiltered.length; i++) {
+      const { ko } = rowLineSplit(exportFiltered[i])
+      ws[XLSX.utils.encode_cell({ r: i + 1, c: 0 })].s = black
+      ws[XLSX.utils.encode_cell({ r: i + 1, c: 1 })].s = black
+      if (ko) ws[XLSX.utils.encode_cell({ r: i + 1, c: 2 })].s = redBold
     }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
@@ -557,6 +562,14 @@ function EstTranslator() {
     const parts = kept.map(text => ({ text, ko: false }))
     if (dropped.length) parts.push({ text: `KO APP:(${dropped.join(' | ')})`, ko: true })
     return parts
+  }
+
+  const rowLineSplit = (r) => {
+    const chk = checkedMap[r.key]
+    if (!chk) return { main: r.line, ko: '' }
+    const kept = r.subs.filter((s, i) => chk[i] !== false).map(s => s.line).filter(Boolean)
+    const dropped = r.subs.filter((s, i) => chk[i] === false).map(s => s.line).filter(Boolean)
+    return { main: kept.join(' | '), ko: dropped.length ? `KO APP:(${dropped.join(' | ')})` : '' }
   }
 
   const detailRow = converted.find(r => r.key === detailKey)
