@@ -1,9 +1,126 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined, ContainerOutlined, ShopOutlined } from '@ant-design/icons'
+import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover, Spin } from 'antd'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined, ContainerOutlined, ShopOutlined, FileExcelOutlined, DownloadOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
+import * as XLSXStyle from 'xlsx-js-style'
+import dailyClassifyFileUrl from '../file/FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx?url'
+import recapMnrFileUrl from '../file/RECAP-MNR CANG 19.10.xlsx?url'
+
+const productionFiles = [
+  { name: 'FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx', url: dailyClassifyFileUrl },
+  { name: 'RECAP-MNR CANG 19.10.xlsx', url: recapMnrFileUrl },
+]
+
+const BORDER_THIN = {
+  top: { style: 'thin', color: { rgb: '000000' } },
+  bottom: { style: 'thin', color: { rgb: '000000' } },
+  left: { style: 'thin', color: { rgb: '000000' } },
+  right: { style: 'thin', color: { rgb: '000000' } },
+}
+
+const HEADER_STYLE = {
+  font: { bold: true },
+  fill: { patternType: 'solid', fgColor: { rgb: 'FFFF00' } },
+  border: BORDER_THIN,
+  alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+}
+
+const SECTION_STYLE = {
+  font: { bold: true },
+  fill: { patternType: 'solid', fgColor: { rgb: 'FFFF00' } },
+  border: BORDER_THIN,
+  alignment: { horizontal: 'left', vertical: 'center' },
+}
+
+const TITLE_STYLE = {
+  font: { bold: true, sz: 13 },
+  fill: { patternType: 'solid', fgColor: { rgb: 'FFFF00' } },
+  alignment: { horizontal: 'center', vertical: 'center' },
+}
+
+const TOTAL_STYLE = {
+  font: { bold: true },
+  fill: { patternType: 'solid', fgColor: { rgb: 'FFE699' } },
+  border: BORDER_THIN,
+  alignment: { horizontal: 'center', vertical: 'center' },
+}
+
+const BODY_STYLE = { border: BORDER_THIN, alignment: { vertical: 'center' } }
+const CENTER_BODY_STYLE = { border: BORDER_THIN, alignment: { horizontal: 'center', vertical: 'center' } }
+
+const styleRange = (ws, r0, c0, r1, c1, cb) => {
+  for (let R = r0; R <= r1; R++) {
+    ws['!rows'] = ws['!rows'] || []
+    for (let C = c0; C <= c1; C++) {
+      const addr = XLSXStyle.utils.encode_cell({ r: R, c: C })
+      const existing = ws[addr]
+      const value = cb ? cb(R, C, existing) : undefined
+      const hasValue = existing && existing.v !== undefined && existing.v !== ''
+      if (!hasValue && value === undefined) {
+        ws[addr] = { t: 's', v: '' }
+      }
+      const target = ws[addr] || (ws[addr] = { t: 's', v: '' })
+      const style = (typeof value === 'object' ? value : null)
+      target.s = style
+    }
+  }
+}
+
+const RECAP_SIZE_COLS = ['20DC', '40DC', '40HC', '45RF']
+const RECAP_SECTIONS = ['SURVEY', 'SURVEY + VỆ SINH', 'VỆ SINH', 'SỬA CHỮA']
+const RECAP_VS_SURVEY_KEYWORDS = ['DVS', 'VS - DVS', 'DVSXB']
+
+const resolveRecapLine = (item, remark) => {
+  const line = String(item.shippingLine || '').toUpperCase().trim()
+  if (/GDL/.test(normalizeForMatch(remark))) return 'GDL'
+  return line
+}
+
+const remarkMatchesAnyExact = (remark, keys) => {
+  const rem = normalizeForMatch(remark)
+  return keys.some(k => normalizeForMatch(k) === rem)
+}
+
+const resolveRecapSection = (cls, remark, keywords) => {
+  const repair = !!(cls.dsc || cls.choHtxnDvs || cls.sc) || remarkMatchesAnyLoose(remark, keywords.dsc)
+  const vs = !!cls.vsDvs || remarkMatchesAnyLoose(remark, keywords.vs)
+  const xuLi = !!cls.xuLiLai || remarkMatchesAnyLoose(remark, keywords.xuLi)
+  const vsSurvey = remarkMatchesAnyExact(remark, RECAP_VS_SURVEY_KEYWORDS)
+  const vsOnly = vs && !vsSurvey
+  let section
+  if (repair) section = vs || vsSurvey ? 'SURVEY + VỆ SINH' : 'SỬA CHỮA'
+  else if (vsSurvey) section = 'SURVEY + VỆ SINH'
+  else if (vsOnly) section = 'VỆ SINH'
+  else section = 'SURVEY'
+  return { section, xuLi }
+}
+
+const sizeGroupOf = (size) => {
+  const s = String(size || '').toUpperCase().trim()
+  if (s.startsWith('45')) return '45RF'
+  if (s.startsWith('40')) return s.includes('H') ? '40HC' : '40DC'
+  if (s.startsWith('2')) return '20DC'
+  return ''
+}
+
+const normalizeForMatch = (str) => String(str || '').toUpperCase().trim().replace(/[.,;:!?()\-_]+/g, ' ').replace(/\s+/g, ' ')
+
+const remarkMatchesAnyLoose = (remark, keys) => {
+  if (!keys || !keys.length) return false
+  const rem = normalizeForMatch(remark)
+  if (!rem) return false
+  const remTokens = rem.split(' ').filter(Boolean)
+  const kwTokens = new Set()
+  for (const k of keys) {
+    const kw = normalizeForMatch(k)
+    if (!kw) continue
+    if (rem.includes(kw)) return true
+    kw.split(' ').filter(Boolean).forEach(t => kwTokens.add(t))
+  }
+  return remTokens.every(t => kwTokens.has(t))
+}
 
 const { Option } = Select
 
@@ -70,6 +187,13 @@ function LockProduction() {
   const [slDateRange, setSlDateRange] = useState(null)
   const [slDetailDateRange, setSlDetailDateRange] = useState(null)
   const [classifyOpen, setClassifyOpen] = useState(false)
+  const [fileViewOpen, setFileViewOpen] = useState(false)
+  const [fileViewLoading, setFileViewLoading] = useState(false)
+  const [fileViewData, setFileViewData] = useState([])
+  const [fileFillDate, setFileFillDate] = useState(dayjs())
+  const fileViewDate = fileFillDate.format('DD.MM')
+  const [fileFilling, setFileFilling] = useState(false)
+  const [fileFillCounts, setFileFillCounts] = useState({ sang: null, toi: null })
   const [keywordsDsc, setKeywordsDsc] = useState([])
   const [keywordsXuLi, setKeywordsXuLi] = useState([])
   const [keywordsVs, setKeywordsVs] = useState([])
@@ -177,6 +301,333 @@ function LockProduction() {
     setCurrentLock(lock)
     setDetailOpen(true)
   }
+
+  const buildSheetPreview = (ws) => {
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+    let rows = aoa.filter(r => r.some(c => String(c ?? '').trim() !== ''))
+    let hi = rows.findIndex(r => r.filter(c => String(c ?? '').trim() !== '').length >= 2)
+    if (hi < 0) hi = 0
+    const header = rows[hi] || []
+    let lastCol = header.length - 1
+    while (lastCol >= 0 && String(header[lastCol] ?? '').trim() === '') lastCol--
+    const cut = lastCol + 1
+    const body = rows.slice(hi + 1).map(r => r.slice(0, cut))
+    return {
+      title: hi > 0 ? String(rows[0]?.[0] ?? '').trim() : '',
+      header: header.slice(0, cut),
+      body,
+    }
+  }
+
+  const loadFileViewData = async (dateStr, isCancelled) => {
+    setFileViewLoading(true)
+    setFileFillCounts({ sang: null, toi: null })
+    try {
+      const [sang, toi] = await Promise.all([
+        fetchFileItemsByShift(dateStr, 'sáng'),
+        fetchFileItemsByShift(dateStr, 'tối'),
+      ])
+      if (isCancelled?.()) return
+      setFileFillCounts({ sang: sang.length, toi: toi.length })
+      let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
+      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
+      if (isCancelled?.()) return
+      const dateLabel = dayjs(dateStr).format('DD/MM/YYYY')
+      const data = []
+      for (const f of productionFiles) {
+        const res = await fetch(f.url)
+        if (!res.ok) throw new Error(`Không tải được ${f.name}`)
+        const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
+        fillWorkbook(wb, f, sang, toi, classifyInfo, dateLabel)
+        data.push({ ...f, sheets: wb.SheetNames.map(sn => ({ name: sn, ...buildSheetPreview(wb.Sheets[sn]) })) })
+      }
+      if (isCancelled?.()) return
+      setFileViewData(data)
+    } catch (e) {
+      if (!isCancelled?.()) {
+        message.error(e.message || 'Lỗi đọc file')
+        setFileViewData([])
+      }
+    } finally {
+      if (!isCancelled?.()) setFileViewLoading(false)
+    }
+  }
+
+  const openFileView = (record) => {
+    if (record?.date) setFileFillDate(dayjs(record.date))
+    else {
+      const latest = locks.find(l => l.items?.length)?.date || locks[0]?.date
+      if (latest) setFileFillDate(dayjs(latest))
+    }
+    setFileViewOpen(true)
+  }
+
+  const renderFileSheetTable = (sheet, fileKey) => {
+    const columns = sheet.header.map((h, i) => ({
+      title: h === '' ? (i === 0 ? 'STT' : `C${i + 1}`) : String(h),
+      dataIndex: i,
+      key: `${fileKey}-${sheet.name}-${i}`,
+      width: 140,
+      ellipsis: true,
+    }))
+    const dataSource = sheet.body.map((r, ri) => {
+      const row = { key: `${fileKey}-${sheet.name}-row-${ri}` }
+      r.forEach((c, ci) => { row[ci] = c instanceof Date ? dayjs(c).format('DD/MM/YYYY HH:mm') : String(c ?? '') })
+      return row
+    })
+    return (
+      <div>
+        {sheet.title ? (
+          <div className="text-center font-semibold bg-yellow-200 border border-gray-400 py-2 mb-2">{sheet.title}</div>
+        ) : null}
+        <Table
+          columns={columns}
+          dataSource={dataSource}
+          pagination={false}
+          size="small"
+          scroll={{ x: 'max-content', y: 420 }}
+          bordered
+        />
+      </div>
+    )
+  }
+
+  const openFileDownload = (file) => {
+    const a = document.createElement('a')
+    a.href = file.url
+    a.download = file.name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  }
+
+  const fetchFileItemsByShift = async (dateStr, shift) => {
+    const res = await api.get('/locks', { params: { dateFrom: dateStr, dateTo: dateStr, shift, type: lockType } })
+    const locksOfShift = Array.isArray(res.data) ? res.data : [res.data]
+    const items = locksOfShift.flatMap(l => l.items || [])
+    const containerNos = [...new Set(items.map(i => i.containerNo).filter(Boolean))]
+    let createdMap = {}
+    if (containerNos.length) {
+      try {
+        const cres = await api.post('/containers/by-nos', { containerNos })
+        ;(cres.data || []).forEach(c => {
+          if (c.containerNo && c.createdAt) createdMap[c.containerNo] = c.createdAt
+        })
+      } catch {
+        createdMap = {}
+      }
+    }
+    return items.map(i => ({ ...i, _createdAt: createdMap[i.containerNo] || null }))
+  }
+
+  const fetchClassifyInfo = async () => {
+    const [slRes, clsRes] = await Promise.all([
+      api.get('/shipping-lists'),
+      api.get('/classification').catch(() => ({ data: {} })),
+    ])
+    const map = {}
+    flattenSlItems(slRes.data || []).forEach(i => {
+      if (i.containerNo) map[String(i.containerNo).toUpperCase().trim()] = i
+    })
+    return {
+      map,
+      keywords: { dsc: clsRes.data?.dsc || [], xuLi: clsRes.data?.xuLi || [], vs: clsRes.data?.vs || [] },
+    }
+  }
+
+  const clearSheetBody = (ws, fromRow) => {
+    const range = XLSX.utils.decode_range(ws['!ref'])
+    for (let R = fromRow; R <= range.e.r; ++R) {
+      for (let C = 0; C <= range.e.c; ++C) {
+        delete ws[XLSX.utils.encode_cell({ r: R, c: C })]
+      }
+    }
+  }
+
+  const fillRecapBlock = (ws, aoa, startRow, endRow, items, classifyMap, keywords, dateLabel, timeLabel) => {
+    for (let R = startRow; R <= Math.min(startRow + 3, endRow); R++) {
+      if (String(aoa[R]?.[0] || '').trim().startsWith('NGÀY')) {
+        ws[XLSX.utils.encode_cell({ r: R, c: 0 })] = { t: 's', v: `NGÀY ${dateLabel} ${timeLabel}` }
+        break
+      }
+    }
+    const bucket = {}
+    items.forEach(i => {
+      const cn = String(i.containerNo || '').toUpperCase().trim()
+      const cls = classifyMap[cn] || {}
+      const remark = i.remark || cls.remark || ''
+      const { section, xuLi } = resolveRecapSection(cls, remark, keywords)
+      const line = resolveRecapLine(i, remark)
+      const grp = sizeGroupOf(i.size)
+      if (!line || !grp) return
+      const k = `${section}|${line}`
+      if (!bucket[k]) bucket[k] = { counts: { '20DC': 0, '40DC': 0, '40HC': 0, '45RF': 0 }, xuLi: 0 }
+      bucket[k].counts[grp] += 1
+      if (xuLi) bucket[k].xuLi += 1
+    })
+    const sizeColTotals = { '20DC': 0, '40DC': 0, '40HC': 0, '45RF': 0 }
+    for (let R = startRow; R <= endRow; R++) {
+      const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
+      if (label === 'TOTAL') {
+        RECAP_SIZE_COLS.forEach((g, gi) => {
+          const tv = sizeColTotals[g]
+          ws[XLSX.utils.encode_cell({ r: R, c: 1 + gi })] = tv ? { t: 'n', v: tv } : { t: 's', v: '' }
+        })
+        continue
+      }
+      if (!RECAP_SECTIONS.includes(label)) continue
+      const sizeColIdx = {}
+      let remarkCol = -1
+      for (let C = 1; C < (aoa[R]?.length || 0); C++) {
+        const h = String(aoa[R][C]).trim().toUpperCase()
+        if (RECAP_SIZE_COLS.includes(h)) sizeColIdx[h] = C
+        else if (h === '' && remarkCol < 0 && Object.keys(sizeColIdx).length === RECAP_SIZE_COLS.length) remarkCol = C
+      }
+      if (remarkCol < 0) remarkCol = (Math.max(...Object.values(sizeColIdx)) ?? 0) + 1
+      for (let R2 = R + 1; R2 <= endRow; R2++) {
+        const lineName = String(aoa[R2]?.[0] || '').trim()
+        const upper = lineName.toUpperCase()
+        if (!lineName || RECAP_SECTIONS.includes(upper) || upper === 'TOTAL') break
+        const entry = bucket[`${label}|${upper}`]
+        RECAP_SIZE_COLS.forEach(g => {
+          const c = sizeColIdx[g]
+          if (c == null) return
+          const addr = XLSX.utils.encode_cell({ r: R2, c })
+          const v = entry ? entry.counts[g] : 0
+          if (v) ws[addr] = { t: 'n', v }
+          else ws[addr] = { t: 's', v: '' }
+          if (entry) sizeColTotals[g] += entry.counts[g]
+        })
+        const rAddr = XLSX.utils.encode_cell({ r: R2, c: remarkCol })
+        const rv = entry && entry.xuLi ? `${entry.xuLi} XU LI` : ''
+        ws[rAddr] = { t: 's', v: rv }
+      }
+    }
+  }
+
+  const fillWorkbook = (wb, file, sang, toi, { map: classifyMap, keywords }, dateLabel) => {
+    if (file.name.includes('PHAN LOẠI')) {
+      const setupSheet = (sheetName, title, items) => {
+        const ws = wb.Sheets[sheetName]
+        if (!ws) return
+        ws['A1'] = { t: 's', v: title }
+        clearSheetBody(ws, 2)
+        const rows = items.map((it, idx) => [
+          idx + 1,
+          it.containerNo || '',
+          it.shippingLine || '',
+          it.size || '',
+          it._createdAt ? dayjs(it._createdAt).format('DD/MM/YYYY') : dateLabel,
+          it.location || '',
+          it.remark || '',
+        ])
+        XLSX.utils.sheet_add_aoa(ws, rows, { origin: { r: 2, c: 0 } })
+        const lastRow = Math.max(2, 1 + rows.length)
+        styleRange(ws, 0, 0, 0, 6, () => TITLE_STYLE)
+        styleRange(ws, 1, 0, 1, 6, () => HEADER_STYLE)
+        styleRange(ws, 2, 0, lastRow, 6, (R, C, cell) => (C === 0 || (cell && cell.t === 'n') ? CENTER_BODY_STYLE : BODY_STYLE))
+        ws['!rows'] = ws['!rows'] || []
+        ws['!rows'][0] = { ...(ws['!rows'][0] || {}), hpt: 24 }
+        ws['!rows'][1] = { ...(ws['!rows'][1] || {}), hpt: 22 }
+        ws['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 10 }, { wch: 24 }]
+      }
+      setupSheet('CA SANG', `TỪ 06H00 NGÀY ${dateLabel}`, sang)
+      setupSheet('CA TOI', `TỪ 18H00 NGÀY ${dateLabel}`, toi)
+    } else {
+      const ws = wb.Sheets['RECAP']
+      if (!ws) throw new Error('Không tìm thấy sheet RECAP')
+      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      const titleRows = []
+      aoa.forEach((r, i) => {
+        if (String(r?.[0] || '').trim().toUpperCase().startsWith('BÁO CÁO')) titleRows.push(i)
+      })
+      if (!titleRows.length) throw new Error('Không tìm thấy cấu trúc RECAP')
+      const shiftData = [
+        { items: sang, timeLabel: 'TỪ 06H00' },
+        { items: toi, timeLabel: 'TỪ 18H00' },
+      ]
+      const headerRows = new Set()
+      const totalRows = new Set()
+      titleRows.forEach((start, idx) => {
+        const end = idx < titleRows.length - 1 ? titleRows[idx + 1] - 1 : aoa.length - 1
+        const sd = shiftData[idx] || shiftData[0]
+        fillRecapBlock(ws, aoa, start, end, sd.items, classifyMap, keywords, dateLabel, sd.timeLabel)
+        for (let R = start; R <= end; R++) {
+          const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
+          if (RECAP_SECTIONS.includes(label)) headerRows.add(R)
+          else if (label === 'TOTAL') totalRows.add(R)
+        }
+      })
+      const range = XLSXStyle.utils.decode_range(ws['!ref'])
+      ws['!rows'] = ws['!rows'] || []
+      for (let R = range.s.r; R <= range.e.r; R++) {
+        const firstLabel = String(aoa[R]?.[0] || '').trim().toUpperCase()
+        const isTitleRow = firstLabel.startsWith('BÁO CÁO') || firstLabel.startsWith('NGÀY')
+        const isBodyRow = !isTitleRow && (headerRows.has(R) || totalRows.has(R) ||
+          (R > 0 && aoa[R] && aoa[R].some((c, ci) => ci === 0 && String(c || '').trim() !== '')))
+        for (let C = range.s.c; C <= range.e.c; C++) {
+          const addr = XLSXStyle.utils.encode_cell({ r: R, c: C })
+          if (headerRows.has(R)) {
+            ws[addr] = ws[addr] || { t: 's', v: '' }
+            ws[addr].s = C === 0 ? SECTION_STYLE : HEADER_STYLE
+          } else if (totalRows.has(R)) {
+            ws[addr] = ws[addr] || { t: 's', v: '' }
+            ws[addr].s = C === 0 ? { ...TOTAL_STYLE, alignment: { horizontal: 'left', vertical: 'center' } } : TOTAL_STYLE
+          } else if (isBodyRow) {
+            const existing = ws[addr]
+            if (!existing) ws[addr] = { t: 's', v: '' }
+            ws[addr].s = C === 0 ? { ...BODY_STYLE, font: { bold: false }, alignment: { horizontal: 'left', vertical: 'center' } } : CENTER_BODY_STYLE
+          } else if (isTitleRow) {
+            ws[addr] = ws[addr] || { t: 's', v: '' }
+            ws[addr].s = TITLE_STYLE
+          }
+        }
+        if (headerRows.has(R) || totalRows.has(R)) ws['!rows'][R] = { ...(ws['!rows'][R] || {}), hpt: 20 }
+        else if (isTitleRow) ws['!rows'][R] = { ...(ws['!rows'][R] || {}), hpt: 22 }
+      }
+      ws['!cols'] = [{ wch: 18 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 14 }]
+    }
+  }
+
+  const downloadFilledFile = async (file) => {
+    setFileFilling(true)
+    try {
+      const dateStr = fileFillDate.format('YYYY-MM-DD')
+      const dateLabel = fileFillDate.format('DD/MM/YYYY')
+      const isDaily = file.name.includes('PHAN LOẠI')
+      const [sang, toi] = await Promise.all([
+        fetchFileItemsByShift(dateStr, 'sáng'),
+        fetchFileItemsByShift(dateStr, 'tối'),
+      ])
+      if (!sang.length && !toi.length) {
+        message.warning(`Không có phiếu sản lượng nào ngày ${dateLabel}`)
+        return
+      }
+      let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
+      if (!isDaily) {
+        try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
+      }
+      const res = await fetch(file.url)
+      if (!res.ok) throw new Error('Không tải được template')
+      const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
+      fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel)
+      XLSXStyle.writeFile(wb, isDaily
+        ? `FILE PHAN LOAI CANG DAILY ${fileFillDate.format('DD.MM')}.xlsx`
+        : `RECAP-MNR CANG ${fileFillDate.format('DD.MM')}.xlsx`)
+      message.success(`Đã điền ${sang.length} container ca sáng, ${toi.length} ca tối`)
+    } catch (e) {
+      message.error(e.message || 'Lỗi điền dữ liệu')
+    } finally {
+      setFileFilling(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!fileViewOpen) return
+    let cancelled = false
+    loadFileViewData(fileFillDate.format('YYYY-MM-DD'), () => cancelled)
+    return () => { cancelled = true }
+  }, [fileViewOpen, fileFillDate, lockType])
 
   const handleAddItem = async () => {
     if (!addContainerNo || !addShippingLine || !addSize) {
@@ -636,11 +1087,16 @@ function LockProduction() {
       render: v => dayjs(v).format('DD/MM/YYYY HH:mm'),
     },
     {
-      title: 'Hành động', key: 'action', width: 80,
+      title: 'Hành động', key: 'action', width: 130,
       render: (_, record) => (
-        <Tooltip title="Xem chi tiết">
-          <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewLock(record)} />
-        </Tooltip>
+        <Space>
+          <Tooltip title="Xem chi tiết">
+            <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewLock(record)} />
+          </Tooltip>
+          <Tooltip title="File báo cáo cảng">
+            <Button size="small" icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} onClick={() => openFileView(record)} />
+          </Tooltip>
+        </Space>
       ),
     },
   ]
@@ -1533,6 +1989,69 @@ function LockProduction() {
             </div>
           </Col>
         </Row>
+      </Modal>
+
+      <Modal
+        title="File báo cáo cảng"
+        open={fileViewOpen}
+        onCancel={() => setFileViewOpen(false)}
+        footer={null}
+        width={1200}
+      >
+        {fileViewLoading ? (
+          <div className="flex flex-col justify-center items-center gap-3" style={{ minHeight: 200 }}>
+            <Spin size="large" />
+            <span className="text-gray-500">Đang đọc file...</span>
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-between mb-3">
+              <Space>
+                <span>Ngày điền dữ liệu:</span>
+                <DatePicker value={fileFillDate} onChange={v => { if (v) { setFileFillDate(v); setFileFillCounts({ sang: null, toi: null }) } }} allowClear={false} />
+                <span className="text-gray-500 text-sm">
+                  {fileFillCounts.sang === null ? 'Đang đếm...' :
+                    fileFillCounts.sang + fileFillCounts.toi === 0 ? <span className="text-red-500">Không có phiếu sản lượng ngày này</span> :
+                    <>Có <b>{fileFillCounts.sang}</b> container ca sáng, <b>{fileFillCounts.toi}</b> ca tối</>}
+                </span>
+              </Space>
+              <span className="text-gray-500 text-sm">Xem trước dữ liệu sẽ điền — phiếu sản lượng {lockType === 'depot' ? 'Depot' : 'Container'}</span>
+            </div>
+            <Tabs
+              items={fileViewData.map((file) => ({
+                key: file.url,
+                label: fileViewDate ? file.name.replace(/\d{2}\.\d{2}/, fileViewDate) : file.name,
+                children: (
+                  <>
+                    <div className="mb-3">
+                      <Space>
+                        <Button type="primary" icon={<DownloadOutlined />} loading={fileFilling} style={{ background: '#52c41a', borderColor: '#52c41a' }} onClick={() => downloadFilledFile(file)}>
+                          Tải file đã điền dữ liệu
+                        </Button>
+                        <Button icon={<ExportOutlined />} onClick={() => openFileDownload(file)}>
+                          Tải file gốc
+                        </Button>
+                      </Space>
+                    </div>
+                    {file.sheets.length > 1 ? (
+                      <Tabs
+                        items={file.sheets.map((sheet) => ({
+                          key: sheet.name,
+                          label: sheet.name.toUpperCase().includes('TOI') ? 'Ca tối' : sheet.name.toUpperCase().includes('SANG') ? 'Ca sáng' : sheet.name,
+                          children: renderFileSheetTable(sheet, file.name),
+                        }))}
+                      />
+                    ) : file.sheets[0] ? (
+                      renderFileSheetTable(file.sheets[0], file.name)
+                    ) : (
+                      <span className="text-gray-400">File trống</span>
+                    )}
+                  </>
+                ),
+              }))}
+            />
+          </>
+        )}
       </Modal>
     </div>
   )
