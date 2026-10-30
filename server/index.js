@@ -9,6 +9,7 @@ import depotRoutes from './routes/depots.js'
 import lockRoutes from './routes/locks.js'
 import shippingListRoutes from './routes/shippingLists.js'
 import classificationRoutes from './routes/classification.js'
+import sanLuongHTRoutes from './routes/sanLuongHT.js'
 import cleanupRoutes from './routes/cleanup.js'
 import User from './models/User.js'
 
@@ -26,6 +27,7 @@ app.use('/api/depots', depotRoutes)
 app.use('/api/locks', lockRoutes)
 app.use('/api/shipping-lists', shippingListRoutes)
 app.use('/api/classification', classificationRoutes)
+app.use('/api/sanluong-ht', sanLuongHTRoutes)
 app.use('/api/cleanup', cleanupRoutes)
 
 async function seedAdmin() {

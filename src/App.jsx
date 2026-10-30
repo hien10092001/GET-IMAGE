@@ -65,6 +65,7 @@ function App() {
     rename: '#e67e22',
     containers: '#eb2f96',
     sanluong: '#13c2c2',
+    sanluonght: '#08979c',
     cut: '#fa8c16',
     est: '#2f54eb',
     depots: '#722ed1',
@@ -97,6 +98,7 @@ function App() {
         { key: 'containers', icon: <ContainerOutlined style={{ color: tabColors.containers }} />, label: <span style={{ color: activeTab === 'containers' ? tabColors.containers : undefined }}>Containers</span> },
         { key: 'depots', icon: <ShopOutlined style={{ color: tabColors.depots }} />, label: <span style={{ color: activeTab === 'depots' ? tabColors.depots : undefined }}>Depot</span> },
         { key: 'sanluong', icon: <LockOutlined style={{ color: tabColors.sanluong }} />, label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}>Sản lượng</span> },
+        { key: 'sanluonght', icon: <FileExcelOutlined style={{ color: tabColors.sanluonght }} />, label: <span style={{ color: activeTab === 'sanluonght' ? tabColors.sanluonght : undefined }}>Sản lượng HT</span> },
       ]
     },  
   ]
@@ -188,7 +190,7 @@ function App() {
             {activeTab === 'dedup' && <ExcelDeduplicator />}
             {activeTab === 'compress' && <ImageCompressor />}
             {activeTab === 'rename' && <RenameSubdirs />}
-            {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong') && (
+            {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong' || activeTab === 'sanluonght') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
             {activeTab === 'cut' && (

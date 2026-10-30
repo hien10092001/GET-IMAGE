@@ -4,6 +4,7 @@ import Login from '../pages/Login'
 const ContainerManagement = lazy(() => import('../pages/ContainerManagement'))
 const DepotsManagement = lazy(() => import('../pages/DepotManagement'))
 const LockProduction = lazy(() => import('../pages/LockProduction'))
+const SanLuongHT = lazy(() => import('../pages/SanLuongHT'))
 
 function ProtectedPages({ activeTab, user, onLogin }) {
   if (!user) {
@@ -19,6 +20,7 @@ function ProtectedPages({ activeTab, user, onLogin }) {
       {activeTab === 'containers' && <ContainerManagement />}
       {activeTab === 'depots' && <DepotsManagement />}
       {activeTab === 'sanluong' && <LockProduction />}
+      {activeTab === 'sanluonght' && <SanLuongHT />}
     </Suspense>
   )
 }
