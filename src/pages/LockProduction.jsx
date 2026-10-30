@@ -68,7 +68,7 @@ const styleRange = (ws, r0, c0, r1, c1, cb) => {
   }
 }
 
-const RECAP_SIZE_COLS = ['20DC', '40DC', '40HC', '45RF']
+const RECAP_SIZE_COLS = ['20DC', '22RF', '40DC', '45RF']
 const RECAP_SECTIONS = ['SURVEY', 'SURVEY + VỆ SINH', 'VỆ SINH', 'SỬA CHỮA']
 const RECAP_VS_SURVEY_KEYWORDS = ['DVS', 'VS - DVS', 'DVSXB']
 
@@ -97,12 +97,111 @@ const resolveRecapSection = (cls, remark, keywords) => {
   return { section, xuLi }
 }
 
+const RECAP_SIZE_OVERRIDES = {
+  '22G1': '20DC',
+  '22G0': '20DC',
+  '2200': '20DC',
+  '2230': '22RF',
+  '22RF': '22RF',
+  '4500': '40DC',
+  '45G1': '40DC',
+  '45G0': '40DC',
+  '45RF': '45RF',
+  '4530': '45RF',
+}
+
 const sizeGroupOf = (size) => {
   const s = String(size || '').toUpperCase().trim()
+  const override = RECAP_SIZE_OVERRIDES[s]
+  if (override) return override
   if (s.startsWith('45')) return '45RF'
-  if (s.startsWith('40')) return s.includes('H') ? '40HC' : '40DC'
+  if (s.startsWith('40')) return '40DC'
+  if (s.startsWith('22')) return '22RF'
   if (s.startsWith('2')) return '20DC'
   return ''
+}
+
+const buildRecapData = (items, classifyMap, keywords) => {
+  const bucket = {}
+  const lines = {}
+  items.forEach(i => {
+    const cn = String(i.containerNo || '').toUpperCase().trim()
+    const cls = classifyMap[cn] || {}
+    const remark = i.remark || cls.remark || ''
+    const { section, xuLi } = resolveRecapSection(cls, remark, keywords)
+    const line = resolveRecapLine(i, remark)
+    const grp = sizeGroupOf(i.size)
+    if (!line || !grp) return
+    if (!lines[section]) lines[section] = []
+    if (!lines[section].includes(line)) lines[section].push(line)
+    const k = `${section}|${line}`
+    if (!bucket[k]) bucket[k] = { counts: { '20DC': 0, '22RF': 0, '40DC': 0, '45RF': 0 }, xuLi: 0 }
+    bucket[k].counts[grp] += 1
+    if (xuLi) bucket[k].xuLi += 1
+  })
+  return { bucket, lines }
+}
+
+const insertSheetRows = (ws, at, count) => {
+  const range = XLSX.utils.decode_range(ws['!ref'])
+  for (let R = range.e.r; R >= at; R--) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const from = XLSX.utils.encode_cell({ r: R, c: C })
+      const to = XLSX.utils.encode_cell({ r: R + count, c: C })
+      if (ws[from]) ws[to] = ws[from]
+      else delete ws[to]
+    }
+  }
+  for (let R = at; R < at + count; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      delete ws[XLSX.utils.encode_cell({ r: R, c: C })]
+    }
+  }
+  range.e.r += count
+  ws['!ref'] = XLSX.utils.encode_range(range)
+  if (ws['!merges']) {
+    ws['!merges'] = ws['!merges'].map(m => {
+      if (m.s.r >= at) return { s: { ...m.s, r: m.s.r + count }, e: { ...m.e, r: m.e.r + count } }
+      if (m.e.r >= at) return { s: m.s, e: { ...m.e, r: m.e.r + count } }
+      return m
+    })
+  }
+  if (ws['!rows']) {
+    const rows = ws['!rows']
+    for (let i = rows.length - 1; i >= at; i--) rows[i + count] = rows[i]
+    for (let i = at; i < at + count; i++) rows[i] = {}
+  }
+}
+
+const addMissingRecapLines = (ws, aoa, titleRows, shiftData, classifyMap, keywords) => {
+  for (let bi = titleRows.length - 1; bi >= 0; bi--) {
+    const start = titleRows[bi]
+    const end = bi < titleRows.length - 1 ? titleRows[bi + 1] - 1 : aoa.length - 1
+    const items = shiftData[bi]?.items || shiftData[0]?.items || []
+    const { lines } = buildRecapData(items, classifyMap, keywords)
+    for (let R = end; R >= start; R--) {
+      const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
+      if (!RECAP_SECTIONS.includes(label)) continue
+      const needed = lines[label] || []
+      if (!needed.length) continue
+      let lastLine = R
+      const existing = new Set()
+      for (let R2 = R + 1; R2 <= end; R2++) {
+        const lineName = String(aoa[R2]?.[0] || '').trim()
+        const upper = lineName.toUpperCase()
+        if (!lineName || RECAP_SECTIONS.includes(upper) || upper === 'TOTAL') break
+        existing.add(upper)
+        lastLine = R2
+      }
+      const missing = needed.filter(l => !existing.has(String(l).toUpperCase()))
+      if (!missing.length) continue
+      const insertAt = lastLine + 1
+      insertSheetRows(ws, insertAt, missing.length)
+      missing.forEach((name, i) => {
+        ws[XLSX.utils.encode_cell({ r: insertAt + i, c: 0 })] = { t: 's', v: name }
+      })
+    }
+  }
 }
 
 const normalizeForMatch = (str) => String(str || '').toUpperCase().trim().replace(/[.,;:!?()\-_]+/g, ' ').replace(/\s+/g, ' ')
@@ -451,21 +550,8 @@ function LockProduction() {
         break
       }
     }
-    const bucket = {}
-    items.forEach(i => {
-      const cn = String(i.containerNo || '').toUpperCase().trim()
-      const cls = classifyMap[cn] || {}
-      const remark = i.remark || cls.remark || ''
-      const { section, xuLi } = resolveRecapSection(cls, remark, keywords)
-      const line = resolveRecapLine(i, remark)
-      const grp = sizeGroupOf(i.size)
-      if (!line || !grp) return
-      const k = `${section}|${line}`
-      if (!bucket[k]) bucket[k] = { counts: { '20DC': 0, '40DC': 0, '40HC': 0, '45RF': 0 }, xuLi: 0 }
-      bucket[k].counts[grp] += 1
-      if (xuLi) bucket[k].xuLi += 1
-    })
-    const sizeColTotals = { '20DC': 0, '40DC': 0, '40HC': 0, '45RF': 0 }
+    const { bucket } = buildRecapData(items, classifyMap, keywords)
+    const sizeColTotals = { '20DC': 0, '22RF': 0, '40DC': 0, '45RF': 0 }
     for (let R = startRow; R <= endRow; R++) {
       const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
       if (label === 'TOTAL') {
@@ -536,16 +622,23 @@ function LockProduction() {
     } else {
       const ws = wb.Sheets['RECAP']
       if (!ws) throw new Error('Không tìm thấy sheet RECAP')
-      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-      const titleRows = []
-      aoa.forEach((r, i) => {
-        if (String(r?.[0] || '').trim().toUpperCase().startsWith('BÁO CÁO')) titleRows.push(i)
-      })
+      let aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      const findTitleRows = () => {
+        const rows = []
+        aoa.forEach((r, i) => {
+          if (String(r?.[0] || '').trim().toUpperCase().startsWith('BÁO CÁO')) rows.push(i)
+        })
+        return rows
+      }
+      let titleRows = findTitleRows()
       if (!titleRows.length) throw new Error('Không tìm thấy cấu trúc RECAP')
       const shiftData = [
         { items: sang, timeLabel: 'TỪ 06H00' },
         { items: toi, timeLabel: 'TỪ 18H00' },
       ]
+      addMissingRecapLines(ws, aoa, titleRows, shiftData, classifyMap, keywords)
+      aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      titleRows = findTitleRows()
       const headerRows = new Set()
       const totalRows = new Set()
       titleRows.forEach((start, idx) => {
