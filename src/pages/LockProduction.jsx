@@ -309,9 +309,6 @@ function LockProduction() {
     remark: true,
     bay: false,
     createdAt: false,
-    dscGroup: false,
-    xuLiLai: false,
-    vsDvs: false,
     shippingLists: false,
   })
 
@@ -323,9 +320,6 @@ function LockProduction() {
     remark: 'Ghi chú',
     bay: 'Bay',
     createdAt: 'Ngày tạo',
-    dscGroup: 'Đã sửa chữa',
-    xuLiLai: 'Xử lý lại',
-    vsDvs: 'Vệ sinh',
     shippingLists: 'List tàu',
   }
 
@@ -915,7 +909,7 @@ function LockProduction() {
     const activeFields = getActiveExportFields()
     if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
     const rows = currentLock.items.map((c, i) =>
-      buildExportRow({ ...c, createdAt: currentLock.createdAt, _idx: i }, activeFields)
+      buildExportRow({ ...c, createdAt: currentLock.date, _idx: i }, activeFields)
     )
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
