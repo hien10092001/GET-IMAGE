@@ -94,6 +94,7 @@ const resolveRecapSection = (cls, remark, keywords) => {
   else if (vsSurvey) section = 'SURVEY + VỆ SINH'
   else if (vsOnly) section = 'VỆ SINH'
   else section = 'SURVEY'
+  if (/GDL/.test(normalizeForMatch(remark))) section = 'SURVEY'
   return { section, xuLi }
 }
 
@@ -576,7 +577,7 @@ function LockProduction() {
           const v = entry ? entry.counts[g] : 0
           if (v) ws[addr] = { t: 'n', v }
           else ws[addr] = { t: 's', v: '' }
-          if (entry) sizeColTotals[g] += entry.counts[g]
+          if (entry && upper !== 'GDL') sizeColTotals[g] += entry.counts[g]
         })
         const rAddr = XLSX.utils.encode_cell({ r: R2, c: remarkCol })
         const rv = entry && entry.xuLi ? `${entry.xuLi} XU LI` : ''
