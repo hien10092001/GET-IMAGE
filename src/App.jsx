@@ -1,7 +1,7 @@
-import { useState, lazy, Suspense } from 'react'
+import { useState, useRef, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined, CloseOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
@@ -763,26 +763,37 @@ const [maxHeight, setMaxHeight] = useState(600)
   const [status, setStatus] = useState('')
   const [progress, setProgress] = useState({ current: 0, total: 0 })
   const [selectedFormats, setSelectedFormats] = useState(new Set(['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif']))
+  const [running, setRunning] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [currentFile, setCurrentFile] = useState('')
+  const cancelRef = useRef(false)
 
   const formatMap = {
     jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png',
     webp: 'image/webp', bmp: 'image/bmp', gif: 'image/gif'
   }
 
-  const formatExtensions = Object.keys(formatMap)
-
-  const toggleFormat = (fmt) => {
-    const newSet = new Set(selectedFormats)
-    if (newSet.has(fmt)) newSet.delete(fmt)
-    else newSet.add(fmt)
-    setSelectedFormats(newSet)
+  const outputFormats = {
+    jpg: { mime: 'image/jpeg', ext: 'jpg' },
+    jpeg: { mime: 'image/jpeg', ext: 'jpeg' },
+    png: { mime: 'image/png', ext: 'png' },
+    webp: { mime: 'image/webp', ext: 'webp' },
+    bmp: { mime: 'image/jpeg', ext: 'jpg' },
+    gif: { mime: 'image/png', ext: 'png' },
   }
+
+  const formatExtensions = Object.keys(formatMap)
 
   const pickSourceFolder = async () => {
     try {
+      if (!window.showDirectoryPicker) {
+        message.warning('Trình duyệt không hỗ trợ chọn thư mục (cần Chrome/Edge bản mới)')
+        return
+      }
       const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
       setSourceDir(dirHandle)
       setImages([])
+      setProgress({ current: 0, total: 0 })
       setStatus(`Đã chọn thư mục nguồn: ${dirHandle.name}`)
     } catch (err) {
       if (err.name !== 'AbortError') setStatus('Lỗi: ' + err.message)
@@ -796,21 +807,37 @@ const [maxHeight, setMaxHeight] = useState(600)
   }
 
   const scanImages = async () => {
-    if (!sourceDir) return
+    if (!sourceDir || scanning) return
+    setScanning(true)
     setStatus('Đang quét thư mục tìm hình ảnh...')
+    setProgress({ current: 0, total: 0 })
     const found = []
+    let scannedDirs = 0
 
-    const walkDir = async (dirHandle, path, parentHandle) => {
+    const walkDir = async (dirHandle, path, parentHandle, depth) => {
+      if (depth > 64) return
       const entries = []
-      for await (const [name, handle] of dirHandle.entries()) {
-        entries.push({ name, handle })
+      try {
+        for await (const [name, handle] of dirHandle.entries()) {
+          entries.push({ name, handle })
+        }
+      } catch {
+        return
       }
+
+      scannedDirs += 1
+      if (scannedDirs % 20 === 0) {
+        setStatus(`Đang quét... ${scannedDirs} thư mục, tìm thấy ${found.length} hình`)
+        await new Promise(r => setTimeout(r, 0))
+      }
+
       const files = entries.filter(e => e.handle.kind === 'file')
       const dirs = entries.filter(e => e.handle.kind === 'directory')
 
       for (const { name, handle } of files) {
         const ext = name.split('.').pop().toLowerCase()
-        if (selectedFormats.has(ext)) {
+        if (!selectedFormats.has(ext)) continue
+        try {
           const file = await handle.getFile()
           found.push({
             name,
@@ -823,98 +850,178 @@ const [maxHeight, setMaxHeight] = useState(600)
             compressedSize: null,
             status: 'pending'
           })
+        } catch {
+          // bỏ qua file không đọc được
         }
       }
-      await Promise.all(dirs.map(({ name, handle }) =>
-        walkDir(handle, path ? `${path}/${name}` : name, handle)
-      ))
+
+      for (const { name, handle } of dirs) {
+        await walkDir(handle, path ? `${path}/${name}` : name, handle, depth + 1)
+      }
     }
 
     try {
-      await walkDir(sourceDir, '', sourceDir)
+      await walkDir(sourceDir, '', sourceDir, 0)
       setImages(found)
       const totalSize = found.reduce((s, img) => s + img.size, 0)
       setStatus(`Tìm thấy ${found.length} hình ảnh (tổng ${formatFileSize(totalSize)})`)
     } catch (err) {
       setStatus('Lỗi quét: ' + err.message)
+    } finally {
+      setScanning(false)
     }
   }
 
-  const compressImage = (file, qualityVal, mw, mh) => {
-    return new Promise((resolve) => {
+  const withTimeout = (promise, ms, message) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message || 'Hết thời gian chờ')), ms)
+    promise.then(
+      value => { clearTimeout(timer); resolve(value) },
+      err => { clearTimeout(timer); reject(err) }
+    )
+  })
+
+  const compressImage = (file, qualityVal, mw, mh, timeoutMs = 60000) => {
+    return new Promise((resolve, reject) => {
       const img = new Image()
       const url = URL.createObjectURL(file)
+      let settled = false
+      let timer = null
+
+      const finish = (fn, value) => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        URL.revokeObjectURL(url)
+        fn(value)
+      }
+
+      timer = setTimeout(() => {
+        finish(reject, new Error('Nén quá lâu (ảnh quá lớn hoặc bị hỏng)'))
+      }, timeoutMs)
+
+      img.onerror = () => finish(reject, new Error('Không đọc được hình ảnh'))
       img.onload = () => {
-        let { width, height } = img
-        if (width > mw) { height = Math.round(height * mw / width); width = mw }
-        if (height > mh) { width = Math.round(width * mh / height); height = mh }
+        try {
+          let { width, height } = img
+          const limitW = Number.isFinite(mw) && mw > 0 ? mw : width
+          const limitH = Number.isFinite(mh) && mh > 0 ? mh : height
+          if (width > limitW) { height = Math.round(height * limitW / width); width = limitW }
+          if (height > limitH) { width = Math.round(width * limitH / height); height = limitH }
+          if (width < 1 || height < 1) {
+            finish(reject, new Error('Kích thước sau khi thu nhỏ không hợp lệ'))
+            return
+          }
 
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0, width, height)
+          const canvas = document.createElement('canvas')
+          canvas.width = width
+          canvas.height = height
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            finish(reject, new Error('Không tạo được canvas'))
+            return
+          }
+          ctx.drawImage(img, 0, 0, width, height)
 
-        let mimeType = file.type
-        if (mimeType === 'image/bmp') mimeType = 'image/jpeg'
+          const ext = file.name.split('.').pop().toLowerCase()
+          let mimeType = outputFormats[ext]?.mime || file.type || 'image/jpeg'
+          if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) mimeType = 'image/png'
 
-        canvas.toBlob((blob) => {
-          URL.revokeObjectURL(url)
-          resolve(blob)
-        }, mimeType, qualityVal / 100)
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              finish(reject, new Error('Không nén được hình ảnh'))
+              return
+            }
+            finish(resolve, blob)
+          }, mimeType, qualityVal / 100)
+        } catch (err) {
+          finish(reject, err)
+        }
       }
       img.src = url
     })
   }
 
   const startCompress = async () => {
-    if (images.length === 0) return
-
-    setStatus('Đang nén hình...')
+    if (images.length === 0 || running) return
+    cancelRef.current = false
+    setRunning(true)
+    setStatus('Bắt đầu nén...')
     setProgress({ current: 0, total: images.length })
 
-    const updated = [...images]
+    const updated = images.map(img => ({ ...img }))
+    const total = updated.length
     let done = 0
-    const CONCURRENCY = 50
 
     const processOne = async (i) => {
       const img = updated[i]
+      updated[i] = { ...img, status: 'processing' }
+      setImages([...updated])
+      setCurrentFile(img.path)
+      let writable = null
       try {
         const compressedBlob = await compressImage(img.file, quality, maxWidth, maxHeight)
-        let ext = img.ext
-        if (img.ext === 'bmp') ext = 'jpg'
-
+        const out = outputFormats[img.ext] || { mime: img.file?.type, ext: img.ext }
+        const ext = out.ext || img.ext
         const newName = img.name.replace(/\.[^.]+$/, '') + '.' + ext
         const parentDir = img.parentHandle
-        const oldFileHandle = img.handle
+        const changedName = newName !== img.name
 
-        await parentDir.removeEntry(img.name).catch(() => {})
+        if (compressedBlob.size >= img.size && !changedName) {
+          updated[i] = { ...img, status: 'skipped' }
+          return
+        }
 
-        const newFileHandle = await parentDir.getFileHandle(newName, { create: true })
-        const writable = await newFileHandle.createWritable()
-        await writable.write(compressedBlob)
-        await writable.close()
+        const newFileHandle = await withTimeout(
+          parentDir.getFileHandle(newName, { create: true }), 30000, 'Không mở được file để ghi'
+        )
+        writable = await withTimeout(
+          newFileHandle.createWritable(), 30000, 'Không tạo được luồng ghi file'
+        )
+        await withTimeout(writable.write(compressedBlob), 30000, 'Ghi file quá lâu')
+        await withTimeout(writable.close(), 30000, 'Đóng file quá lâu')
+        writable = null
+        if (changedName) await parentDir.removeEntry(img.name).catch(() => {})
 
-        updated[i] = { ...img, compressedSize: compressedBlob.size, status: 'done' }
+        updated[i] = { ...img, name: newName, ext, compressedSize: compressedBlob.size, status: 'done' }
       } catch (err) {
+        if (writable) {
+          try { await writable.abort() } catch { /* bỏ qua khi hủy luồng ghi */ }
+        }
         updated[i] = { ...img, status: 'error', error: err.message }
+      } finally {
+        done += 1
+        setProgress({ current: done, total })
+        setStatus(`Đang nén ${done}/${total} hình...`)
+        setImages([...updated])
       }
     }
 
-    for (let start = 0; start < updated.length; start += CONCURRENCY) {
-      const batch = updated.slice(start, start + CONCURRENCY)
-      await Promise.all(batch.map((_, idx) => processOne(start + idx)))
-      done += batch.length
-      setProgress({ current: done, total: images.length })
-      setStatus(`Đang nén ${done}/${images.length} hình...`)
+    try {
+      const CONCURRENCY = Math.min(4, total)
+      let cursor = 0
+      const worker = async () => {
+        while (!cancelRef.current) {
+          const i = cursor++
+          if (i >= total) return
+          await processOne(i)
+          await new Promise(r => setTimeout(r, 0))
+        }
+      }
+      await Promise.all(Array.from({ length: Math.max(1, CONCURRENCY) }, worker))
+    } finally {
+      setImages([...updated])
+      setRunning(false)
+      setCurrentFile('')
+
+      if (cancelRef.current) {
+        setStatus(`Đã dừng. Đã xử lý ${done}/${total} hình.`)
+      } else {
+        const totalBefore = updated.reduce((s, img) => s + img.size, 0)
+        const totalAfter = updated.reduce((s, img) => s + (img.compressedSize ?? img.size), 0)
+        const pct = totalBefore > 0 ? ((1 - totalAfter / totalBefore) * 100).toFixed(1) : 0
+        setStatus(`Hoàn thành! Giảm từ ${formatFileSize(totalBefore)} → ${formatFileSize(totalAfter)} (${pct}%)`)
+      }
     }
-
-    setImages(updated)
-
-    const totalBefore = images.reduce((s, img) => s + img.size, 0)
-    const totalAfter = updated.filter(img => img.compressedSize).reduce((s, img) => s + img.compressedSize, 0)
-    const pct = totalBefore > 0 ? ((1 - totalAfter / totalBefore) * 100).toFixed(1) : 0
-    setStatus(`Hoàn thành! Giảm từ ${formatFileSize(totalBefore)} → ${formatFileSize(totalAfter)} (${pct}%)`)
   }
 
   const totalSize = images.reduce((s, img) => s + img.size, 0)
@@ -923,7 +1030,7 @@ const [maxHeight, setMaxHeight] = useState(600)
   return (
     <Space direction="vertical" size="middle" className="w-full">
       <Card title={<Space><FolderOpenOutlined /><Text strong>1. Chọn thư mục nguồn</Text></Space>}>
-        <Button type="primary" icon={<FolderOpenOutlined />} onClick={pickSourceFolder} size="large">
+        <Button type="primary" icon={<FolderOpenOutlined />} onClick={pickSourceFolder} size="large" disabled={running}>
           {sourceDir ? `Đã chọn: ${sourceDir.name}` : 'Chọn thư mục nguồn'}
         </Button>
         {sourceDir && (
@@ -935,6 +1042,7 @@ const [maxHeight, setMaxHeight] = useState(600)
         <Checkbox.Group
           value={[...selectedFormats]}
           onChange={(values) => setSelectedFormats(new Set(values))}
+          disabled={running || scanning}
           className="flex flex-wrap gap-2"
         >
           {formatExtensions.map(fmt => (
@@ -942,8 +1050,9 @@ const [maxHeight, setMaxHeight] = useState(600)
           ))}
         </Checkbox.Group>
         {sourceDir && (
-          <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanImages} className="mt-3">
-            Quét tìm hình ảnh
+          <Button type="primary" ghost icon={<SearchOutlined />} onClick={scanImages} loading={scanning}
+            disabled={running} className="mt-3">
+            {scanning ? 'Đang quét...' : 'Quét tìm hình ảnh'}
           </Button>
         )}
       </Card>
@@ -970,14 +1079,20 @@ const [maxHeight, setMaxHeight] = useState(600)
       {images.length > 0 && (
         <Card title={<Space><Text strong>4. Danh sách hình ảnh ({images.length})</Text><Text type="secondary">{formatFileSize(totalSize)}</Text></Space>}>
           <div className="max-h-60 overflow-y-auto border border-gray-200 rounded-lg p-2">
-            {images.map((img, i) => {
+            {images.map((img) => {
               const saved = img.compressedSize ? ((1 - img.compressedSize / img.size) * 100).toFixed(1) : null
               return (
-                <div key={i} className={`flex items-center gap-3 px-3 py-2 rounded mb-1 ${img.status === 'done' ? 'bg-green-50' : img.status === 'error' ? 'bg-red-50' : ''}`}>
-                  <Tag color={img.status === 'done' ? 'success' : img.status === 'error' ? 'error' : 'default'}>{img.path}</Tag>
+                <div key={img.path} className={`flex items-center gap-3 px-3 py-2 rounded mb-1 ${img.status === 'done' ? 'bg-green-50' : img.status === 'error' ? 'bg-red-50' : img.status === 'skipped' ? 'bg-gray-50' : img.status === 'processing' ? 'bg-blue-50' : ''}`}>
+                  <Tag color={img.status === 'done' ? 'success' : img.status === 'error' ? 'error' : img.status === 'skipped' ? 'warning' : img.status === 'processing' ? 'processing' : 'default'}>{img.path}</Tag>
                   <Text type="secondary" className="text-xs">{formatFileSize(img.size)}</Text>
                   {img.compressedSize && (
                     <Text type="success" strong className="text-xs">→ {formatFileSize(img.compressedSize)} (-{saved}%)</Text>
+                  )}
+                  {img.status === 'processing' && (
+                    <Text type="secondary" className="text-xs">Đang nén...</Text>
+                  )}
+                  {img.status === 'skipped' && (
+                    <Text type="secondary" className="text-xs">Bỏ qua (không nhỏ hơn bản gốc)</Text>
                   )}
                   {img.status === 'error' && (
                     <Text type="danger" className="text-xs">Lỗi: {img.error}</Text>
@@ -993,13 +1108,24 @@ const [maxHeight, setMaxHeight] = useState(600)
       )}
 
       {images.length > 0 && (
-        <Button type="primary" danger icon={<CompressOutlined />} onClick={startCompress}
-          disabled={progress.total > 0 && progress.current < progress.total} size="large" block>
-          Nén {images.length} hình (ghi đè tại chỗ)
-        </Button>
+        <Space direction="vertical" className="w-full" size="small">
+          <Button type="primary" danger icon={<CompressOutlined />} onClick={startCompress}
+            loading={running} disabled={running || scanning} size="large" block>
+            Nén {images.length} hình (ghi đè tại chỗ)
+          </Button>
+          {running && (
+            <Button danger icon={<CloseOutlined />} onClick={() => { cancelRef.current = true; setStatus('Đang dừng...') }} block>
+              Dừng nén
+            </Button>
+          )}
+        </Space>
       )}
 
       {status && <Alert message={status} type="info" showIcon />}
+
+      {currentFile && running && (
+        <Text type="secondary" ellipsis>Đang xử lý: {currentFile}</Text>
+      )}
 
       {progress.total > 0 && (
         <Progress percent={Math.round((progress.current / progress.total) * 100)} format={() => `${progress.current}/${progress.total}`} />

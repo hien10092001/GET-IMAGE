@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Input, Select, AutoComplete, Space, Tag, Modal, Form, Row, Col, Card, DatePicker, Radio, Divider, Popconfirm, message, Tooltip, Upload, Tabs, Checkbox, Popover, Spin } from 'antd'
-import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined, ContainerOutlined, ShopOutlined, FileExcelOutlined, DownloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined, EyeOutlined, LockOutlined, UploadOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, CheckCircleOutlined, FilterOutlined, SaveOutlined, ContainerOutlined, ShopOutlined, FileExcelOutlined, DownloadOutlined, MailOutlined } from '@ant-design/icons'
 const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -12,6 +12,233 @@ const productionFiles = [
   { name: 'FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx', url: dailyClassifyFileUrl },
   { name: 'RECAP-MNR CANG 19.10.xlsx', url: recapMnrFileUrl },
 ]
+
+const EMAIL_TEMPLATE_STORAGE_KEY = 'recapEmailTemplates'
+const EMAIL_CC_STORAGE_KEY = 'recapEmailCc'
+const EMAIL_ATTACHMENT_KEYS = ['daily', 'recap']
+const DEFAULT_EMAIL_TEMPLATES = {
+  dailySubject: 'FILE PHAN LOAI CANG DAILY {shortDate}',
+  dailyBody: 'Gửi file báo cáo sản lượng ngày {date}.',
+  recapSubject: 'RECAP-MNR CANG {shortDate}',
+  recapBody: 'Gửi file báo cáo sản lượng ngày {date}.',
+  bothSubject: 'BÁO CÁO SẢN LƯỢNG {shortDate}',
+  bothBody: 'Gửi file báo cáo sản lượng ngày {date} gồm:\n- FILE PHAN LOAI CANG DAILY\n- RECAP-MNR CANG',
+  signature: '',
+}
+
+const formatEmailTemplate = (template, values) =>
+  String(template || '')
+    .replace(/\{shortDate\}/g, values.shortDate || '')
+    .replace(/\{date\}/g, values.date || '')
+    .replace(/\{file\}/g, values.file || '')
+    .replace(/\{type\}/g, values.type || '')
+
+const workbookToBase64 = (wb) => {
+  const arrayBuffer = XLSXStyle.write(wb, { type: 'array', bookType: 'xlsx' })
+  const bytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
+const escapeHtml = (value) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+
+const plainTextToHtml = (value) =>
+  String(value || '')
+    .split('\n')
+    .map((line) => `<div>${escapeHtml(line) || '<br>'}</div>`)
+    .join('')
+
+const ensureHtml = (value) => {
+  const text = String(value || '')
+  if (!text.trim()) return ''
+  return /<[a-z][\s\S]*>/i.test(text) ? text : plainTextToHtml(text)
+}
+
+const blobToDataUrl = (blob) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result)
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+
+const inlineEditorImages = async (root) => {
+  if (!root) return false
+  let changed = false
+  const images = [...root.querySelectorAll('img')]
+  for (const image of images) {
+    const rawSrc = image.getAttribute('src') || ''
+    if (!rawSrc || /^data:/i.test(rawSrc) || /^cid:/i.test(rawSrc)) continue
+    const src = rawSrc.startsWith('//') ? `https:${rawSrc}` : rawSrc
+    try {
+      const response = await fetch(src)
+      if (!response.ok) continue
+      const blob = await response.blob()
+      if (!/^image\//i.test(blob.type)) continue
+      image.setAttribute('src', await blobToDataUrl(blob))
+      changed = true
+    } catch {
+      // cross-origin or auth-protected images cannot be read here
+    }
+  }
+  return changed
+}
+
+const inlineHtmlBlobImages = async (html) => {
+  if (!html || !/<img/i.test(html)) return html
+  const doc = new DOMParser().parseFromString(html, 'text/html')
+  const changed = await inlineEditorImages(doc.body)
+  return changed ? doc.body.innerHTML : html
+}
+
+const RichTextEditor = ({ value, onChange, minHeight = 140 }) => {
+  const ref = useRef(null)
+  const fileInputRef = useRef(null)
+  const selectedImageRef = useRef(null)
+  const savedRangeRef = useRef(null)
+  useEffect(() => {
+    if (ref.current && ref.current.innerHTML !== (value || '')) {
+      ref.current.innerHTML = value || ''
+      selectedImageRef.current = null
+      savedRangeRef.current = null
+    }
+  }, [value])
+  const sync = () => onChange?.(ref.current?.innerHTML || '')
+  const saveSelection = () => {
+    const root = ref.current
+    const selection = window.getSelection()
+    if (!root || !selection || !selection.rangeCount) return
+    const range = selection.getRangeAt(0)
+    if (root.contains(range.commonAncestorContainer)) {
+      savedRangeRef.current = range.cloneRange()
+    }
+  }
+  const selectImage = (image) => {
+    const current = selectedImageRef.current
+    if (current && current !== image) current.style.outline = ''
+    selectedImageRef.current = image || null
+    if (image) image.style.outline = '2px solid #1677ff'
+  }
+  const insertImage = (src) => {
+    const root = ref.current
+    if (!root) return
+    const image = document.createElement('img')
+    image.setAttribute('src', src)
+    const selection = window.getSelection()
+    let range = savedRangeRef.current
+    if (!range || !root.contains(range.commonAncestorContainer)) {
+      range = null
+      if (selection && selection.rangeCount && root.contains(selection.anchorNode)) {
+        range = selection.getRangeAt(0).cloneRange()
+      }
+    }
+    root.focus()
+    if (range) {
+      range.deleteContents()
+      range.insertNode(image)
+      const after = document.createRange()
+      after.setStartAfter(image)
+      after.collapse(true)
+      if (selection) {
+        selection.removeAllRanges()
+        selection.addRange(after)
+      }
+      savedRangeRef.current = after.cloneRange()
+    } else {
+      root.appendChild(image)
+    }
+    sync()
+  }
+  const handlePickImage = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const target = selectedImageRef.current
+      if (target && ref.current?.contains(target)) {
+        target.setAttribute('src', reader.result)
+        target.style.outline = ''
+        selectedImageRef.current = null
+        sync()
+      } else {
+        insertImage(reader.result)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+  const handleEditorClick = (e) => {
+    if (e.target?.tagName === 'IMG') selectImage(e.target)
+    else selectImage(null)
+    saveSelection()
+  }
+  const handleEditorDoubleClick = (e) => {
+    if (e.target?.tagName === 'IMG') {
+      selectImage(e.target)
+      handlePickImageFile()
+    }
+  }
+  const handlePickImageFile = () => fileInputRef.current?.click()
+  const handlePaste = (e) => {
+    const items = [...(e.clipboardData?.items || [])]
+    const imageFiles = items
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter(Boolean)
+    if (imageFiles.length) {
+      e.preventDefault()
+      imageFiles.forEach((file) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+          document.execCommand('insertImage', false, reader.result)
+          sync()
+        }
+        reader.readAsDataURL(file)
+      })
+      return
+    }
+    setTimeout(async () => {
+      if (await inlineEditorImages(ref.current)) sync()
+    }, 0)
+  }
+  const hasSelectedImage = Boolean(selectedImageRef.current)
+  return (
+    <div>
+      <div className="flex items-center justify-end gap-2 mb-1">
+        <span className="text-xs text-gray-500">
+          {hasSelectedImage ? 'Bấm nút để thay ảnh đang chọn' : 'Dán chữ ký, hoặc chèn ảnh/logo'}
+        </span>
+        <Button size="small" icon={<UploadOutlined />} onMouseDown={(e) => e.preventDefault()} onClick={handlePickImageFile}>
+          {hasSelectedImage ? 'Thay ảnh/logo' : 'Chèn ảnh/logo'}
+        </Button>
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePickImage} />
+      </div>
+      <div
+        ref={ref}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={sync}
+        onPaste={handlePaste}
+        onKeyUp={saveSelection}
+        onMouseUp={saveSelection}
+        onBlur={saveSelection}
+        onClick={handleEditorClick}
+        onDoubleClick={handleEditorDoubleClick}
+        className="border rounded px-3 py-2 bg-white"
+        style={{ minHeight, outline: 'none' }}
+      />
+    </div>
+  )
+}
 
 const BORDER_THIN = {
   top: { style: 'thin', color: { rgb: '000000' } },
@@ -293,6 +520,21 @@ function LockProduction() {
   const [fileFillDate, setFileFillDate] = useState(dayjs())
   const fileViewDate = fileFillDate.format('DD.MM')
   const [fileFilling, setFileFilling] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailFile, setEmailFile] = useState(null)
+  const [emailForm] = Form.useForm()
+  const [emailTemplateOpen, setEmailTemplateOpen] = useState(false)
+  const [emailTemplateForm] = Form.useForm()
+  const [emailTemplates, setEmailTemplates] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(EMAIL_TEMPLATE_STORAGE_KEY) || '{}')
+      return { ...DEFAULT_EMAIL_TEMPLATES, ...saved }
+    } catch {
+      return DEFAULT_EMAIL_TEMPLATES
+    }
+  })
+  const emailAttachmentKeys = EMAIL_ATTACHMENT_KEYS
   const [fileFillCounts, setFileFillCounts] = useState({ sang: null, toi: null })
   const [keywordsDsc, setKeywordsDsc] = useState([])
   const [keywordsXuLi, setKeywordsXuLi] = useState([])
@@ -677,36 +919,152 @@ function LockProduction() {
     }
   }
 
+  const buildFilledFile = async (file) => {
+    const dateStr = fileFillDate.format('YYYY-MM-DD')
+    const dateLabel = fileFillDate.format('DD/MM/YYYY')
+    const isDaily = file.name.includes('PHAN LOẠI')
+    const [sang, toi] = await Promise.all([
+      fetchFileItemsByShift(dateStr, 'sáng'),
+      fetchFileItemsByShift(dateStr, 'tối'),
+    ])
+    if (!sang.length && !toi.length) {
+      message.warning(`Không có phiếu sản lượng nào ngày ${dateLabel}`)
+      return null
+    }
+    let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
+    if (!isDaily) {
+      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
+    }
+    const res = await fetch(file.url)
+    if (!res.ok) throw new Error('Không tải được template')
+    const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
+    fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel)
+    return {
+      wb,
+      sang,
+      toi,
+      isDaily,
+      filename: isDaily
+        ? `FILE PHAN LOAI CANG DAILY ${fileFillDate.format('DD.MM')}.xlsx`
+        : `RECAP-MNR CANG ${fileFillDate.format('DD.MM')}.xlsx`,
+    }
+  }
+
   const downloadFilledFile = async (file) => {
     setFileFilling(true)
     try {
-      const dateStr = fileFillDate.format('YYYY-MM-DD')
-      const dateLabel = fileFillDate.format('DD/MM/YYYY')
-      const isDaily = file.name.includes('PHAN LOẠI')
-      const [sang, toi] = await Promise.all([
-        fetchFileItemsByShift(dateStr, 'sáng'),
-        fetchFileItemsByShift(dateStr, 'tối'),
-      ])
-      if (!sang.length && !toi.length) {
-        message.warning(`Không có phiếu sản lượng nào ngày ${dateLabel}`)
-        return
-      }
-      let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
-      if (!isDaily) {
-        try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
-      }
-      const res = await fetch(file.url)
-      if (!res.ok) throw new Error('Không tải được template')
-      const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
-      fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel)
-      XLSXStyle.writeFile(wb, isDaily
-        ? `FILE PHAN LOAI CANG DAILY ${fileFillDate.format('DD.MM')}.xlsx`
-        : `RECAP-MNR CANG ${fileFillDate.format('DD.MM')}.xlsx`)
-      message.success(`Đã điền ${sang.length} container ca sáng, ${toi.length} ca tối`)
+      const built = await buildFilledFile(file)
+      if (!built) return
+      XLSXStyle.writeFile(built.wb, built.filename)
+      message.success(`Đã điền ${built.sang.length} container ca sáng, ${built.toi.length} ca tối`)
     } catch (e) {
       message.error(e.message || 'Lỗi điền dữ liệu')
     } finally {
       setFileFilling(false)
+    }
+  }
+
+  const getEmailFile = (key) =>
+    productionFiles.find((file) => key === 'daily' ? file.name.includes('PHAN LOẠI') : file.name.includes('RECAP'))
+
+  const getEmailFiles = (keys) => keys.map(getEmailFile).filter(Boolean)
+
+  const getEmailTemplateValues = (keys) => {
+    const files = getEmailFiles(keys)
+    const filenames = files.map((file) => file.name.replace(/\d{2}\.\d{2}/, fileViewDate))
+    const type = files.map((file) => file.name.includes('PHAN LOẠI') ? 'FILE PHAN LOAI CANG DAILY' : 'RECAP-MNR CANG').join(' + ')
+    return {
+      shortDate: fileViewDate,
+      date: fileFillDate.format('DD/MM/YYYY'),
+      file: filenames.join(', '),
+      type,
+    }
+  }
+
+  const applyEmailTemplates = (keys, templates = emailTemplates) => {
+    const values = getEmailTemplateValues(keys)
+    const both = keys.includes('daily') && keys.includes('recap')
+    const subjectTemplate = both
+      ? templates.bothSubject
+      : keys.includes('daily') ? templates.dailySubject : templates.recapSubject
+    const bodyTemplate = both
+      ? templates.bothBody
+      : keys.includes('daily') ? templates.dailyBody : templates.recapBody
+    const bodyHtml = ensureHtml(formatEmailTemplate(bodyTemplate, values))
+    const signatureHtml = ensureHtml(formatEmailTemplate(templates.signature || '', values))
+    emailForm.setFieldsValue({
+      subject: formatEmailTemplate(subjectTemplate, values),
+      text: signatureHtml ? `${bodyHtml}<br><br>${signatureHtml}` : bodyHtml,
+    })
+  }
+
+  const openEmailModal = (file) => {
+    setEmailFile(file)
+    emailForm.setFieldsValue({
+      to: localStorage.getItem('recapEmailTo') || '',
+      cc: localStorage.getItem(EMAIL_CC_STORAGE_KEY) || '',
+    })
+    applyEmailTemplates(EMAIL_ATTACHMENT_KEYS)
+    setEmailOpen(true)
+  }
+
+  const openEmailTemplateModal = () => {
+    emailTemplateForm.setFieldsValue(emailTemplates)
+    setEmailTemplateOpen(true)
+  }
+
+  const saveEmailTemplates = async () => {
+    try {
+      const values = await emailTemplateForm.validateFields()
+      const next = { ...emailTemplates, ...values }
+      setEmailTemplates(next)
+      localStorage.setItem(EMAIL_TEMPLATE_STORAGE_KEY, JSON.stringify(next))
+      if (emailFile) applyEmailTemplates(EMAIL_ATTACHMENT_KEYS, next)
+      setEmailTemplateOpen(false)
+      message.success('Đã lưu mẫu email')
+    } catch (e) {
+      if (e?.errorFields) return
+      message.error(e.message || 'Lỗi lưu mẫu email')
+    }
+  }
+
+  const sendEmail = async () => {
+    try {
+      const values = await emailForm.validateFields()
+      const files = getEmailFiles(EMAIL_ATTACHMENT_KEYS)
+      if (!files.length) {
+        message.warning('Chọn ít nhất 1 file đính kèm')
+        return
+      }
+      setEmailSending(true)
+      const attachments = []
+      for (const file of files) {
+        const built = await buildFilledFile(file)
+        if (!built) throw new Error(`Không có dữ liệu cho ${file.name}`)
+        attachments.push({
+          filename: built.filename,
+          contentBase64: workbookToBase64(built.wb),
+        })
+      }
+      const res = await api.post('/email/send-recap', {
+        to: values.to,
+        cc: values.cc,
+        subject: values.subject,
+        html: await inlineHtmlBlobImages(values.text),
+        attachments,
+      })
+      if (values.to?.trim()) localStorage.setItem('recapEmailTo', values.to.trim())
+      localStorage.setItem(EMAIL_CC_STORAGE_KEY, values.cc?.trim() || '')
+      message.success(`Đã gửi email kèm ${attachments.map((attachment) => attachment.filename).join(', ')}`)
+      if (res.data?.warnings?.length) {
+        message.warning(`Logo/chữ ký có ${res.data.warnings.length} ảnh không nhúng được: ${res.data.warnings[0]}. Dùng nút "Chèn ảnh/logo" để chọn lại ảnh.`, 8)
+      }
+      setEmailOpen(false)
+    } catch (e) {
+      if (e?.errorFields) return
+      message.error(e.response?.data?.message || e.message || 'Lỗi gửi email')
+    } finally {
+      setEmailSending(false)
     }
   }
 
@@ -2112,12 +2470,15 @@ function LockProduction() {
                 children: (
                   <>
                     <div className="mb-3">
-                      <Space>
+                      <Space wrap>
                         <Button type="primary" icon={<DownloadOutlined />} loading={fileFilling} style={{ background: '#52c41a', borderColor: '#52c41a' }} onClick={() => downloadFilledFile(file)}>
                           Tải file đã điền dữ liệu
                         </Button>
                         <Button icon={<ExportOutlined />} onClick={() => openFileDownload(file)}>
                           Tải file gốc
+                        </Button>
+                        <Button icon={<MailOutlined />} onClick={() => openEmailModal(file)}>
+                          Gửi email tự động
                         </Button>
                       </Space>
                     </div>
@@ -2140,6 +2501,98 @@ function LockProduction() {
             />
           </>
         )}
+      </Modal>
+
+      <Modal
+        title={<>Gửi email tự động <Button type="link" size="small" onClick={openEmailTemplateModal}>Cài đặt mẫu email</Button></>}
+        open={emailOpen}
+        onCancel={() => setEmailOpen(false)}
+        onOk={sendEmail}
+        okText="Gửi email"
+        cancelText="Hủy"
+        confirmLoading={emailSending}
+        okButtonProps={{ icon: <MailOutlined /> }}
+        width={620}
+      >
+        <Form form={emailForm} layout="vertical">
+          <Form.Item
+            name="to"
+            label="Email nhận"
+            extra="Để trống để dùng email mặc định trong cấu hình máy chủ."
+            rules={[{
+              validator: (_, value) => {
+                const list = String(value || '').split(/[,;]/).map((v) => v.trim()).filter(Boolean)
+                const invalid = list.find((v) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))
+                return invalid ? Promise.reject(new Error(`Email không hợp lệ: ${invalid}`)) : Promise.resolve()
+              },
+            }]}
+          >
+            <Input placeholder="nguoinhan@congty.com" />
+          </Form.Item>
+          <Form.Item
+            name="cc"
+            label="CC"
+            extra="Danh sách CC sẽ được tự động lưu cho lần gửi sau."
+            rules={[{
+              validator: (_, value) => {
+                const list = String(value || '').split(/[,;]/).map((v) => v.trim()).filter(Boolean)
+                const invalid = list.find((v) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v))
+                return invalid ? Promise.reject(new Error(`Email không hợp lệ: ${invalid}`)) : Promise.resolve()
+              },
+            }]}
+          >
+            <Input placeholder="Có thể nhập nhiều email, cách nhau bởi dấu phẩy" />
+          </Form.Item>
+          <Form.Item
+            name="subject" label="Tiêu đề" rules={[{ required: true, message: 'Nhập tiêu đề email' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item
+            name="text"
+            label="Nội dung"
+            extra="Có thể dán trực tiếp chữ ký từ Gmail/Outlook; định dạng sẽ được giữ nguyên."
+          >
+            <RichTextEditor minHeight={180} />
+          </Form.Item>
+          <div className="text-sm text-gray-500">
+            File đính kèm (cả 2 file): <b>{emailAttachmentKeys.map((key) => getEmailFile(key)?.name.replace(/\d{2}\.\d{2}/, fileViewDate)).filter(Boolean).join(', ')}</b>
+          </div>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="Cài đặt mẫu email"
+        open={emailTemplateOpen}
+        onCancel={() => setEmailTemplateOpen(false)}
+        onOk={saveEmailTemplates}
+        okText="Lưu mẫu"
+        cancelText="Hủy"
+        width={680}
+      >
+        <div className="text-sm text-gray-500 mb-3">
+          Có thể dùng <code>{'{date}'}</code> = 01/11/2026, <code>{'{shortDate}'}</code> = 01.11,
+          <code>{'{file}'}</code> = tên file đính kèm, <code>{'{type}'}</code> = loại báo cáo.
+        </div>
+        <Form form={emailTemplateForm} layout="vertical">
+          <Divider orientation="left" plain>CẢ 2 FILE</Divider>
+          <Form.Item name="bothSubject" label="Tiêu đề" rules={[{ required: true, message: 'Nhập tiêu đề email' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="bothBody" label="Nội dung">
+            <Input.TextArea rows={4} />
+          </Form.Item>
+          <Divider orientation="left" plain>CHỮ KÝ EMAIL</Divider>
+          <Form.Item
+            name="signature"
+            label="Chữ ký"
+            extra="Dán trực tiếp chữ ký từ Gmail/Outlook vào đây. Nếu logo bị lỗi khi người nhận xem, xóa logo đó và bấm nút Chèn ảnh/logo để chọn file ảnh từ máy."
+          >
+            <RichTextEditor minHeight={160} />
+          </Form.Item>
+        </Form>
+        <Button type="link" size="small" onClick={() => emailTemplateForm.setFieldsValue(DEFAULT_EMAIL_TEMPLATES)}>
+          Khôi phục mặc định
+        </Button>
       </Modal>
     </div>
   )

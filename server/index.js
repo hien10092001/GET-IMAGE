@@ -11,6 +11,7 @@ import shippingListRoutes from './routes/shippingLists.js'
 import classificationRoutes from './routes/classification.js'
 import sanLuongHTRoutes from './routes/sanLuongHT.js'
 import cleanupRoutes from './routes/cleanup.js'
+import emailRoutes from './routes/email.js'
 import User from './models/User.js'
 
 const app = express()
@@ -29,6 +30,7 @@ app.use('/api/shipping-lists', shippingListRoutes)
 app.use('/api/classification', classificationRoutes)
 app.use('/api/sanluong-ht', sanLuongHTRoutes)
 app.use('/api/cleanup', cleanupRoutes)
+app.use('/api/email', emailRoutes)
 
 async function seedAdmin() {
   const exists = await User.findOne({ username: 'admin' })
