@@ -7,11 +7,20 @@ import api from '../services/api'
 import * as XLSXStyle from 'xlsx-js-style'
 import dailyClassifyFileUrl from '../file/FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx?url'
 import recapMnrFileUrl from '../file/RECAP-MNR CANG 19.10.xlsx?url'
+import depotDailyClassifyFileUrl from '../file/FILE PHAN LOẠI DEPOT DAILY 03.11.xlsx?url'
+import depotRecapMnrFileUrl from '../file/RECAP-MNR DEPOT PHƯỚC AN 03.11.xlsx?url'
 
-const productionFiles = [
+const CANG_PRODUCTION_FILES = [
   { name: 'FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx', url: dailyClassifyFileUrl },
   { name: 'RECAP-MNR CANG 19.10.xlsx', url: recapMnrFileUrl },
 ]
+
+const DEPOT_PRODUCTION_FILES = [
+  { name: 'FILE PHAN LOẠI DEPOT DAILY 03.11.xlsx', url: depotDailyClassifyFileUrl },
+  { name: 'RECAP-MNR DEPOT PHƯỚC AN 03.11.xlsx', url: depotRecapMnrFileUrl },
+]
+
+const getProductionFiles = (type) => (type === 'depot' ? DEPOT_PRODUCTION_FILES : CANG_PRODUCTION_FILES)
 
 const EMAIL_TEMPLATE_STORAGE_KEY = 'recapEmailTemplates'
 const EMAIL_CC_STORAGE_KEY = 'recapEmailCc'
@@ -24,6 +33,44 @@ const DEFAULT_EMAIL_TEMPLATES = {
   bothSubject: 'BÁO CÁO SẢN LƯỢNG {shortDate}',
   bothBody: 'Gửi file báo cáo sản lượng ngày {date} gồm:\n- FILE PHAN LOAI CANG DAILY\n- RECAP-MNR CANG',
   signature: '',
+}
+
+const DEFAULT_DEPOT_EMAIL_TEMPLATES = {
+  dailySubject: 'FILE PHAN LOAI DEPOT DAILY {shortDate}',
+  recapSubject: 'RECAP-MNR DEPOT {shortDate}',
+  bothSubject: 'BÁO CÁO SẢN LƯỢNG DEPOT {shortDate}',
+  bothBody: 'Gửi file báo cáo sản lượng ngày {date} gồm:\n- FILE PHAN LOAI DEPOT DAILY\n- RECAP-MNR DEPOT',
+}
+
+const resolveEmailTemplates = (templates, type) => {
+  if (type !== 'depot') return templates
+  const resolved = { ...templates }
+  Object.keys(DEFAULT_DEPOT_EMAIL_TEMPLATES).forEach((key) => {
+    if (!resolved[key] || resolved[key] === DEFAULT_EMAIL_TEMPLATES[key]) {
+      resolved[key] = DEFAULT_DEPOT_EMAIL_TEMPLATES[key]
+    }
+  })
+  return resolved
+}
+
+const EMAIL_STORAGE_KEYS = {
+  container: { to: 'recapEmailTo', cc: EMAIL_CC_STORAGE_KEY, templates: EMAIL_TEMPLATE_STORAGE_KEY },
+  depot: { to: 'depotRecapEmailTo', cc: 'depotRecapEmailCc', templates: 'depotRecapEmailTemplates' },
+}
+
+const getEmailStorage = (type) => EMAIL_STORAGE_KEYS[type] || EMAIL_STORAGE_KEYS.container
+
+const emailDefaultsFor = (type) => (type === 'depot'
+  ? { ...DEFAULT_EMAIL_TEMPLATES, ...DEFAULT_DEPOT_EMAIL_TEMPLATES }
+  : DEFAULT_EMAIL_TEMPLATES)
+
+const loadEmailTemplates = (type) => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(getEmailStorage(type).templates) || '{}')
+    return { ...emailDefaultsFor(type), ...saved }
+  } catch {
+    return emailDefaultsFor(type)
+  }
 }
 
 const formatEmailTemplate = (template, values) =>
@@ -277,6 +324,8 @@ const TOTAL_STYLE = {
 const BODY_STYLE = { border: BORDER_THIN, alignment: { vertical: 'center' } }
 const CENTER_BODY_STYLE = { border: BORDER_THIN, alignment: { horizontal: 'center', vertical: 'center' } }
 
+const cloneStyle = (style) => (style ? JSON.parse(JSON.stringify(style)) : style)
+
 const styleRange = (ws, r0, c0, r1, c1, cb) => {
   for (let R = r0; R <= r1; R++) {
     ws['!rows'] = ws['!rows'] || []
@@ -290,7 +339,7 @@ const styleRange = (ws, r0, c0, r1, c1, cb) => {
       }
       const target = ws[addr] || (ws[addr] = { t: 's', v: '' })
       const style = (typeof value === 'object' ? value : null)
-      target.s = style
+      target.s = cloneStyle(style)
     }
   }
 }
@@ -369,6 +418,64 @@ const buildRecapData = (items, classifyMap, keywords) => {
   })
   return { bucket, lines }
 }
+
+const DEPOT_SECTIONS = ['SURVEY', 'VỆ SINH', 'SỬA CHỮA']
+const DEPOT_SIZE_COLS = ['20DC', '20RF', '40DC', '40RF']
+const DEPOT_TOTAL_LABELS = ['TỔNG CỘNG', 'TOTAL']
+
+const findDepotPersonnelRow = (aoa) => {
+  for (let i = 0; i < aoa.length; i++) {
+    const label = String(aoa[i]?.[0] || '').trim().toUpperCase()
+    if (label.includes('NHÂN SỰ') || label.includes('NHAN SU')) return i
+  }
+  return aoa.length
+}
+
+const depotSizeGroupOf = (size) => {
+  const s = String(size || '').toUpperCase().trim()
+  const isRf = s.includes('RF') || s.endsWith('30')
+  if (s.startsWith('2')) return isRf ? '20RF' : '20DC'
+  if (s.startsWith('4')) return isRf ? '40RF' : '40DC'
+  return ''
+}
+
+const resolveDepotSection = (cls, remark, keywords) => {
+  const dscKeywords = [...(keywords?.dsc || []), 'DSC']
+  const vsKeywords = [...(keywords?.vs || []), 'DVS']
+  const repair = !!(cls.dsc || cls.choHtxnDvs || cls.sc) || remarkMatchesAnyLoose(remark, dscKeywords)
+  const vs = !!cls.vsDvs || remarkMatchesAnyLoose(remark, vsKeywords)
+  if (repair) return 'SỬA CHỮA'
+  if (vs) return 'VỆ SINH'
+  return 'SURVEY'
+}
+
+const buildDepotRecapData = (items, classifyMap, keywords) => {
+  const bucket = {}
+  const lines = {}
+  items.forEach(i => {
+    const cn = String(i.containerNo || '').toUpperCase().trim()
+    const cls = classifyMap[cn] || {}
+    const remark = i.remark || cls.remark || ''
+    const line = String(i.shippingLine || '').toUpperCase().trim()
+    const grp = depotSizeGroupOf(i.size)
+    if (!line || !grp) return
+    const section = resolveDepotSection(cls, remark, keywords)
+    if (!lines[section]) lines[section] = []
+    if (!lines[section].includes(line)) lines[section].push(line)
+    const k = `${section}|${line}`
+    if (!bucket[k]) bucket[k] = Object.fromEntries(DEPOT_SIZE_COLS.map(g => [g, 0]))
+    bucket[k][grp] += 1
+  })
+  return { bucket, lines }
+}
+
+const excelSerialFromISODate = (iso) => {
+  const [y, m, d] = String(iso || '').split('-').map(Number)
+  if (!y || !m || !d) return ''
+  const ms = Date.UTC(y, m - 1, d) - Date.UTC(1899, 11, 30)
+  return Math.floor(ms / 86400000)
+}
+
 
 const insertSheetRows = (ws, at, count) => {
   const range = XLSX.utils.decode_range(ws['!ref'])
@@ -526,14 +633,11 @@ function LockProduction() {
   const [emailForm] = Form.useForm()
   const [emailTemplateOpen, setEmailTemplateOpen] = useState(false)
   const [emailTemplateForm] = Form.useForm()
-  const [emailTemplates, setEmailTemplates] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(EMAIL_TEMPLATE_STORAGE_KEY) || '{}')
-      return { ...DEFAULT_EMAIL_TEMPLATES, ...saved }
-    } catch {
-      return DEFAULT_EMAIL_TEMPLATES
-    }
-  })
+  const [emailTemplatesByType, setEmailTemplatesByType] = useState(() => ({
+    container: loadEmailTemplates('container'),
+    depot: loadEmailTemplates('depot'),
+  }))
+  const emailTemplates = emailTemplatesByType[lockType] || emailTemplatesByType.container
   const emailAttachmentKeys = EMAIL_ATTACHMENT_KEYS
   const [fileFillCounts, setFileFillCounts] = useState({ sang: null, toi: null })
   const [keywordsDsc, setKeywordsDsc] = useState([])
@@ -639,7 +743,7 @@ function LockProduction() {
   }
 
   const buildSheetPreview = (ws) => {
-    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false })
     let rows = aoa.filter(r => r.some(c => String(c ?? '').trim() !== ''))
     let hi = rows.findIndex(r => r.filter(c => String(c ?? '').trim() !== '').length >= 2)
     if (hi < 0) hi = 0
@@ -670,11 +774,11 @@ function LockProduction() {
       if (isCancelled?.()) return
       const dateLabel = dayjs(dateStr).format('DD/MM/YYYY')
       const data = []
-      for (const f of productionFiles) {
+      for (const f of getProductionFiles(lockType)) {
         const res = await fetch(f.url)
         if (!res.ok) throw new Error(`Không tải được ${f.name}`)
         const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
-        fillWorkbook(wb, f, sang, toi, classifyInfo, dateLabel)
+        fillWorkbook(wb, f, sang, toi, classifyInfo, dateLabel, dateStr)
         data.push({ ...f, sheets: wb.SheetNames.map(sn => ({ name: sn, ...buildSheetPreview(wb.Sheets[sn]) })) })
       }
       if (isCancelled?.()) return
@@ -828,7 +932,166 @@ function LockProduction() {
     }
   }
 
-  const fillWorkbook = (wb, file, sang, toi, { map: classifyMap, keywords }, dateLabel) => {
+  const addMissingDepotLines = (ws, aoa, items, classifyMap, keywords) => {
+    const { lines } = buildDepotRecapData(items, classifyMap, keywords)
+    const personnelRow = findDepotPersonnelRow(aoa)
+    const sectionRows = []
+    aoa.forEach((r, i) => {
+      if (i >= personnelRow) return
+      const label = String(r?.[0] || '').trim().toUpperCase()
+      if (DEPOT_SECTIONS.includes(label)) sectionRows.push({ label, row: i })
+    })
+    for (let si = sectionRows.length - 1; si >= 0; si--) {
+      const { label, row } = sectionRows[si]
+      let end = personnelRow - 1
+      for (let R = row + 1; R < aoa.length; R++) {
+        const l = String(aoa[R]?.[0] || '').trim().toUpperCase()
+        if (!l || DEPOT_SECTIONS.includes(l) || DEPOT_TOTAL_LABELS.includes(l)) { end = R - 1; break }
+      }
+      const existing = new Set()
+      let lastLine = row
+      for (let R = row + 1; R <= end; R++) {
+        const ln = String(aoa[R]?.[0] || '').trim().toUpperCase()
+        if (!ln) break
+        if (ln.includes('GIÁM ĐỊNH')) continue
+        existing.add(ln)
+        lastLine = R
+      }
+      const needed = (lines[label] || []).map(l => String(l).toUpperCase())
+      const missing = needed.filter(l => !existing.has(l) && !l.includes('GIÁM ĐỊNH'))
+      if (!missing.length) continue
+      const insertAt = lastLine + 1
+      insertSheetRows(ws, insertAt, missing.length)
+      missing.forEach((name, i) => {
+        ws[XLSX.utils.encode_cell({ r: insertAt + i, c: 0 })] = { t: 's', v: name }
+      })
+    }
+  }
+
+  const fillDepotDaily = (ws, items, dateLabel, dateSerial) => {
+    if (!ws) throw new Error('Không tìm thấy sheet CA')
+    ws['A1'] = { t: 's', v: `NGÀY ${dateLabel}` }
+    clearSheetBody(ws, 2)
+    const rows = items.map((it, idx) => [
+      idx + 1,
+      it.containerNo || '',
+      it.shippingLine || '',
+      it.size || '',
+      dateSerial,
+      it.location || '',
+      it.remark || '',
+    ])
+    XLSX.utils.sheet_add_aoa(ws, rows, { origin: { r: 2, c: 0 } })
+    const lastRow = Math.max(2, 1 + rows.length)
+    for (let R = 2; R <= lastRow; R++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: 4 })
+      if (ws[addr] && ws[addr].v !== '') {
+        ws[addr].z = 'DD/MM/YYYY'
+        ws[addr].w = dateLabel
+      }
+    }
+    styleRange(ws, 0, 0, 0, 6, () => TITLE_STYLE)
+    styleRange(ws, 1, 0, 1, 6, () => HEADER_STYLE)
+    styleRange(ws, 2, 0, lastRow, 6, (R, C, cell) => (C === 0 || C === 4 || (cell && cell.t === 'n') ? CENTER_BODY_STYLE : BODY_STYLE))
+    ws['!rows'] = ws['!rows'] || []
+    ws['!rows'][0] = { ...(ws['!rows'][0] || {}), hpt: 24 }
+    ws['!rows'][1] = { ...(ws['!rows'][1] || {}), hpt: 22 }
+    ws['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 10 }, { wch: 26 }]
+  }
+
+  const fillDepotRecap = (ws, items, classifyMap, keywords, dateLabel) => {
+    if (!ws) throw new Error('Không tìm thấy sheet RECAP')
+    let aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+    const ngayRow = aoa.findIndex(r => String(r?.[0] || '').trim().toUpperCase().startsWith('NGÀY'))
+    if (ngayRow >= 0) ws[XLSX.utils.encode_cell({ r: ngayRow, c: 0 })] = { t: 's', v: `NGÀY ${dateLabel}` }
+
+    addMissingDepotLines(ws, aoa, items, classifyMap, keywords)
+    aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+    const { bucket } = buildDepotRecapData(items, classifyMap, keywords)
+    const totals = Object.fromEntries(DEPOT_SIZE_COLS.map(g => [g, 0]))
+    const personnelRow = findDepotPersonnelRow(aoa)
+
+    for (let R = 0; R < personnelRow; R++) {
+      const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
+      const sizeColIdx = {}
+      for (let C = 1; C < (aoa[R]?.length || 0); C++) {
+        const h = String(aoa[R][C] || '').trim().toUpperCase()
+        if (DEPOT_SIZE_COLS.includes(h)) sizeColIdx[h] = C
+      }
+      if (DEPOT_SECTIONS.includes(label)) {
+        for (let R2 = R + 1; R2 < personnelRow; R2++) {
+          const lineName = String(aoa[R2]?.[0] || '').trim()
+          const upper = lineName.toUpperCase()
+          if (!lineName) break
+          if (DEPOT_SECTIONS.includes(upper) || DEPOT_TOTAL_LABELS.includes(upper)) break
+          if (upper.includes('GIÁM ĐỊNH')) continue
+          const entry = bucket[`${label}|${upper}`]
+          DEPOT_SIZE_COLS.forEach(g => {
+            const c = sizeColIdx[g]
+            if (c == null) return
+            const addr = XLSX.utils.encode_cell({ r: R2, c })
+            const v = entry ? entry[g] : 0
+            if (v) {
+              ws[addr] = { t: 'n', v }
+              totals[g] += v
+            } else {
+              ws[addr] = { t: 's', v: '' }
+            }
+          })
+        }
+      } else if (DEPOT_TOTAL_LABELS.includes(label)) {
+        DEPOT_SIZE_COLS.forEach((g, gi) => {
+          const c = sizeColIdx[g] ?? (gi + 1)
+          const tv = totals[g]
+          ws[XLSX.utils.encode_cell({ r: R, c })] = tv ? { t: 'n', v: tv } : { t: 's', v: '' }
+        })
+      }
+    }
+
+    const range = XLSXStyle.utils.decode_range(ws['!ref'])
+    ws['!rows'] = ws['!rows'] || []
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      const firstLabel = String(aoa[R]?.[0] || '').trim().toUpperCase()
+      const isTitleRow = firstLabel.startsWith('BÁO CÁO') || firstLabel.startsWith('NGÀY')
+      const isSectionRow = DEPOT_SECTIONS.includes(firstLabel) || firstLabel === 'NHÂN SỰ'
+      const isTotalRow = DEPOT_TOTAL_LABELS.includes(firstLabel)
+      const isBodyRow = !isTitleRow && !isSectionRow && !isTotalRow && firstLabel !== ''
+      for (let C = range.s.c; C <= range.e.c; C++) {
+        const addr = XLSXStyle.utils.encode_cell({ r: R, c: C })
+        if (isSectionRow) {
+          ws[addr] = ws[addr] || { t: 's', v: '' }
+          ws[addr].s = cloneStyle(C === 0 ? SECTION_STYLE : HEADER_STYLE)
+        } else if (isTotalRow) {
+          ws[addr] = ws[addr] || { t: 's', v: '' }
+          ws[addr].s = cloneStyle(C === 0 ? { ...TOTAL_STYLE, alignment: { horizontal: 'left', vertical: 'center' } } : TOTAL_STYLE)
+        } else if (isBodyRow) {
+          ws[addr] = ws[addr] || { t: 's', v: '' }
+          ws[addr].s = cloneStyle(C === 0 ? { ...BODY_STYLE, alignment: { horizontal: 'left', vertical: 'center' } } : CENTER_BODY_STYLE)
+        } else if (isTitleRow) {
+          ws[addr] = ws[addr] || { t: 's', v: '' }
+          ws[addr].s = cloneStyle(TITLE_STYLE)
+        }
+      }
+      if (isSectionRow || isTotalRow) ws['!rows'][R] = { ...(ws['!rows'][R] || {}), hpt: 20 }
+      else if (isTitleRow) ws['!rows'][R] = { ...(ws['!rows'][R] || {}), hpt: 22 }
+    }
+    ws['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 10 }]
+  }
+
+  const fillWorkbook = (wb, file, sang, toi, { map: classifyMap, keywords }, dateLabel, dateStr) => {
+    const isDepot = file.name.includes('DEPOT')
+    if (isDepot) {
+      const allItems = [...sang, ...toi]
+      if (file.name.includes('PHAN LOẠI')) {
+        const ws = wb.Sheets['CA'] || wb.Sheets[wb.SheetNames[0]]
+        fillDepotDaily(ws, allItems, dateLabel, excelSerialFromISODate(dateStr))
+      } else {
+        const ws = wb.Sheets['RECAP'] || wb.Sheets[wb.SheetNames[0]]
+        fillDepotRecap(ws, allItems, classifyMap, keywords, dateLabel)
+      }
+      return
+    }
     if (file.name.includes('PHAN LOẠI')) {
       const setupSheet = (sheetName, title, items) => {
         const ws = wb.Sheets[sheetName]
@@ -899,17 +1162,17 @@ function LockProduction() {
           const addr = XLSXStyle.utils.encode_cell({ r: R, c: C })
           if (headerRows.has(R)) {
             ws[addr] = ws[addr] || { t: 's', v: '' }
-            ws[addr].s = C === 0 ? SECTION_STYLE : HEADER_STYLE
+            ws[addr].s = cloneStyle(C === 0 ? SECTION_STYLE : HEADER_STYLE)
           } else if (totalRows.has(R)) {
             ws[addr] = ws[addr] || { t: 's', v: '' }
-            ws[addr].s = C === 0 ? { ...TOTAL_STYLE, alignment: { horizontal: 'left', vertical: 'center' } } : TOTAL_STYLE
+            ws[addr].s = cloneStyle(C === 0 ? { ...TOTAL_STYLE, alignment: { horizontal: 'left', vertical: 'center' } } : TOTAL_STYLE)
           } else if (isBodyRow) {
             const existing = ws[addr]
             if (!existing) ws[addr] = { t: 's', v: '' }
-            ws[addr].s = C === 0 ? { ...BODY_STYLE, font: { bold: false }, alignment: { horizontal: 'left', vertical: 'center' } } : CENTER_BODY_STYLE
+            ws[addr].s = cloneStyle(C === 0 ? { ...BODY_STYLE, font: { bold: false }, alignment: { horizontal: 'left', vertical: 'center' } } : CENTER_BODY_STYLE)
           } else if (isTitleRow) {
             ws[addr] = ws[addr] || { t: 's', v: '' }
-            ws[addr].s = TITLE_STYLE
+            ws[addr].s = cloneStyle(TITLE_STYLE)
           }
         }
         if (headerRows.has(R) || totalRows.has(R)) ws['!rows'][R] = { ...(ws['!rows'][R] || {}), hpt: 20 }
@@ -938,15 +1201,21 @@ function LockProduction() {
     const res = await fetch(file.url)
     if (!res.ok) throw new Error('Không tải được template')
     const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
-    fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel)
+    fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel, dateStr)
+    const isDepot = file.name.includes('DEPOT')
+    const shortDate = fileFillDate.format('DD.MM')
     return {
       wb,
       sang,
       toi,
       isDaily,
-      filename: isDaily
-        ? `FILE PHAN LOAI CANG DAILY ${fileFillDate.format('DD.MM')}.xlsx`
-        : `RECAP-MNR CANG ${fileFillDate.format('DD.MM')}.xlsx`,
+      filename: isDepot
+        ? (isDaily
+          ? `FILE PHAN LOAI DEPOT DAILY ${shortDate}.xlsx`
+          : `RECAP-MNR DEPOT PHƯỚC AN ${shortDate}.xlsx`)
+        : (isDaily
+          ? `FILE PHAN LOAI CANG DAILY ${shortDate}.xlsx`
+          : `RECAP-MNR CANG ${shortDate}.xlsx`),
     }
   }
 
@@ -965,14 +1234,18 @@ function LockProduction() {
   }
 
   const getEmailFile = (key) =>
-    productionFiles.find((file) => key === 'daily' ? file.name.includes('PHAN LOẠI') : file.name.includes('RECAP'))
+    getProductionFiles(lockType).find((file) => key === 'daily' ? file.name.includes('PHAN LOẠI') : file.name.includes('RECAP'))
 
   const getEmailFiles = (keys) => keys.map(getEmailFile).filter(Boolean)
 
   const getEmailTemplateValues = (keys) => {
     const files = getEmailFiles(keys)
     const filenames = files.map((file) => file.name.replace(/\d{2}\.\d{2}/, fileViewDate))
-    const type = files.map((file) => file.name.includes('PHAN LOẠI') ? 'FILE PHAN LOAI CANG DAILY' : 'RECAP-MNR CANG').join(' + ')
+    const isDepot = lockType === 'depot'
+    const type = files.map((file) => {
+      if (file.name.includes('PHAN LOẠI')) return isDepot ? 'FILE PHAN LOAI DEPOT DAILY' : 'FILE PHAN LOAI CANG DAILY'
+      return isDepot ? 'RECAP-MNR DEPOT' : 'RECAP-MNR CANG'
+    }).join(' + ')
     return {
       shortDate: fileViewDate,
       date: fileFillDate.format('DD/MM/YYYY'),
@@ -983,15 +1256,16 @@ function LockProduction() {
 
   const applyEmailTemplates = (keys, templates = emailTemplates) => {
     const values = getEmailTemplateValues(keys)
+    const active = resolveEmailTemplates(templates, lockType)
     const both = keys.includes('daily') && keys.includes('recap')
     const subjectTemplate = both
-      ? templates.bothSubject
-      : keys.includes('daily') ? templates.dailySubject : templates.recapSubject
+      ? active.bothSubject
+      : keys.includes('daily') ? active.dailySubject : active.recapSubject
     const bodyTemplate = both
-      ? templates.bothBody
-      : keys.includes('daily') ? templates.dailyBody : templates.recapBody
+      ? active.bothBody
+      : keys.includes('daily') ? active.dailyBody : active.recapBody
     const bodyHtml = ensureHtml(formatEmailTemplate(bodyTemplate, values))
-    const signatureHtml = ensureHtml(formatEmailTemplate(templates.signature || '', values))
+    const signatureHtml = ensureHtml(formatEmailTemplate(active.signature || '', values))
     emailForm.setFieldsValue({
       subject: formatEmailTemplate(subjectTemplate, values),
       text: signatureHtml ? `${bodyHtml}<br><br>${signatureHtml}` : bodyHtml,
@@ -1000,9 +1274,10 @@ function LockProduction() {
 
   const openEmailModal = (file) => {
     setEmailFile(file)
+    const storage = getEmailStorage(lockType)
     emailForm.setFieldsValue({
-      to: localStorage.getItem('recapEmailTo') || '',
-      cc: localStorage.getItem(EMAIL_CC_STORAGE_KEY) || '',
+      to: localStorage.getItem(storage.to) || '',
+      cc: localStorage.getItem(storage.cc) || '',
     })
     applyEmailTemplates(EMAIL_ATTACHMENT_KEYS)
     setEmailOpen(true)
@@ -1017,8 +1292,8 @@ function LockProduction() {
     try {
       const values = await emailTemplateForm.validateFields()
       const next = { ...emailTemplates, ...values }
-      setEmailTemplates(next)
-      localStorage.setItem(EMAIL_TEMPLATE_STORAGE_KEY, JSON.stringify(next))
+      setEmailTemplatesByType((prev) => ({ ...prev, [lockType]: next }))
+      localStorage.setItem(getEmailStorage(lockType).templates, JSON.stringify(next))
       if (emailFile) applyEmailTemplates(EMAIL_ATTACHMENT_KEYS, next)
       setEmailTemplateOpen(false)
       message.success('Đã lưu mẫu email')
@@ -1053,8 +1328,9 @@ function LockProduction() {
         html: await inlineHtmlBlobImages(values.text),
         attachments,
       })
-      if (values.to?.trim()) localStorage.setItem('recapEmailTo', values.to.trim())
-      localStorage.setItem(EMAIL_CC_STORAGE_KEY, values.cc?.trim() || '')
+      const storage = getEmailStorage(lockType)
+      if (values.to?.trim()) localStorage.setItem(storage.to, values.to.trim())
+      localStorage.setItem(storage.cc, values.cc?.trim() || '')
       message.success(`Đã gửi email kèm ${attachments.map((attachment) => attachment.filename).join(', ')}`)
       if (res.data?.warnings?.length) {
         message.warning(`Logo/chữ ký có ${res.data.warnings.length} ảnh không nhúng được: ${res.data.warnings[0]}. Dùng nút "Chèn ảnh/logo" để chọn lại ảnh.`, 8)
@@ -1539,7 +1815,7 @@ function LockProduction() {
           <Tooltip title="Xem chi tiết">
             <Button type="primary" size="small" icon={<EyeOutlined />} onClick={() => handleViewLock(record)} />
           </Tooltip>
-          <Tooltip title="File báo cáo cảng">
+          <Tooltip title={lockType === 'depot' ? 'File báo cáo depot' : 'File báo cáo cảng'}>
             <Button size="small" icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} onClick={() => openFileView(record)} />
           </Tooltip>
         </Space>
@@ -2438,7 +2714,7 @@ function LockProduction() {
       </Modal>
 
       <Modal
-        title="File báo cáo cảng"
+        title={lockType === 'depot' ? 'File báo cáo depot' : 'File báo cáo cảng'}
         open={fileViewOpen}
         onCancel={() => setFileViewOpen(false)}
         footer={null}
@@ -2561,7 +2837,7 @@ function LockProduction() {
       </Modal>
 
       <Modal
-        title="Cài đặt mẫu email"
+        title={`Cài đặt mẫu email - ${lockType === 'depot' ? 'Sản lượng Depot' : 'Sản lượng Cảng'}`}
         open={emailTemplateOpen}
         onCancel={() => setEmailTemplateOpen(false)}
         onOk={saveEmailTemplates}
@@ -2590,7 +2866,7 @@ function LockProduction() {
             <RichTextEditor minHeight={160} />
           </Form.Item>
         </Form>
-        <Button type="link" size="small" onClick={() => emailTemplateForm.setFieldsValue(DEFAULT_EMAIL_TEMPLATES)}>
+        <Button type="link" size="small" onClick={() => emailTemplateForm.setFieldsValue(resolveEmailTemplates(DEFAULT_EMAIL_TEMPLATES, lockType))}>
           Khôi phục mặc định
         </Button>
       </Modal>
