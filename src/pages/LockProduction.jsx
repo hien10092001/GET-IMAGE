@@ -359,10 +359,10 @@ const remarkMatchesAnyExact = (remark, keys) => {
   return keys.some(k => normalizeForMatch(k) === rem)
 }
 
-const resolveRecapSection = (cls, remark, keywords) => {
-  const repair = !!(cls.dsc || cls.choHtxnDvs || cls.sc) || remarkMatchesAnyLoose(remark, keywords.dsc)
-  const vs = !!cls.vsDvs || remarkMatchesAnyLoose(remark, keywords.vs)
-  const xuLi = !!cls.xuLiLai || remarkMatchesAnyLoose(remark, keywords.xuLi)
+const resolveRecapSection = (remark, keywords) => {
+  const repair = remarkMatchesAnyLoose(remark, keywords.dsc)
+  const vs = remarkMatchesAnyLoose(remark, keywords.vs)
+  const xuLi = remarkMatchesAnyLoose(remark, keywords.xuLi)
   const vsSurvey = remarkMatchesAnyExact(remark, RECAP_VS_SURVEY_KEYWORDS)
   const vsOnly = vs && !vsSurvey
   let section
@@ -398,14 +398,12 @@ const sizeGroupOf = (size) => {
   return ''
 }
 
-const buildRecapData = (items, classifyMap, keywords) => {
+const buildRecapData = (items, keywords) => {
   const bucket = {}
   const lines = {}
   items.forEach(i => {
-    const cn = String(i.containerNo || '').toUpperCase().trim()
-    const cls = classifyMap[cn] || {}
-    const remark = i.remark || cls.remark || ''
-    const { section, xuLi } = resolveRecapSection(cls, remark, keywords)
+    const remark = i.remark || ''
+    const { section, xuLi } = resolveRecapSection(remark, keywords)
     const line = resolveRecapLine(i, remark)
     const grp = sizeGroupOf(i.size)
     if (!line || !grp) return
@@ -433,33 +431,29 @@ const findDepotPersonnelRow = (aoa) => {
 
 const depotSizeGroupOf = (size) => {
   const s = String(size || '').toUpperCase().trim()
-  const isRf = s.includes('RF') || s.endsWith('30')
+  const isRf = s.includes('RF') || /R\d/.test(s) || s.endsWith('30')
   if (s.startsWith('2')) return isRf ? '20RF' : '20DC'
   if (s.startsWith('4')) return isRf ? '40RF' : '40DC'
   return ''
 }
 
-const resolveDepotSection = (cls, remark, keywords) => {
+const resolveDepotSection = (remark, keywords) => {
   const dscKeywords = [...(keywords?.dsc || []), 'DSC']
   const vsKeywords = [...(keywords?.vs || []), 'DVS']
-  const repair = !!(cls.dsc || cls.choHtxnDvs || cls.sc) || remarkMatchesAnyLoose(remark, dscKeywords)
-  const vs = !!cls.vsDvs || remarkMatchesAnyLoose(remark, vsKeywords)
-  if (repair) return 'SỬA CHỮA'
-  if (vs) return 'VỆ SINH'
+  if (remarkMatchesAnyLoose(remark, dscKeywords)) return 'SỬA CHỮA'
+  if (remarkMatchesAnyLoose(remark, vsKeywords)) return 'VỆ SINH'
   return 'SURVEY'
 }
 
-const buildDepotRecapData = (items, classifyMap, keywords) => {
+const buildDepotRecapData = (items, keywords) => {
   const bucket = {}
   const lines = {}
   items.forEach(i => {
-    const cn = String(i.containerNo || '').toUpperCase().trim()
-    const cls = classifyMap[cn] || {}
-    const remark = i.remark || cls.remark || ''
+    const remark = i.remark || ''
     const line = String(i.shippingLine || '').toUpperCase().trim()
     const grp = depotSizeGroupOf(i.size)
     if (!line || !grp) return
-    const section = resolveDepotSection(cls, remark, keywords)
+    const section = resolveDepotSection(remark, keywords)
     if (!lines[section]) lines[section] = []
     if (!lines[section].includes(line)) lines[section].push(line)
     const k = `${section}|${line}`
@@ -508,12 +502,12 @@ const insertSheetRows = (ws, at, count) => {
   }
 }
 
-const addMissingRecapLines = (ws, aoa, titleRows, shiftData, classifyMap, keywords) => {
+const addMissingRecapLines = (ws, aoa, titleRows, shiftData, keywords) => {
   for (let bi = titleRows.length - 1; bi >= 0; bi--) {
     const start = titleRows[bi]
     const end = bi < titleRows.length - 1 ? titleRows[bi + 1] - 1 : aoa.length - 1
     const items = shiftData[bi]?.items || shiftData[0]?.items || []
-    const { lines } = buildRecapData(items, classifyMap, keywords)
+    const { lines } = buildRecapData(items, keywords)
     for (let R = end; R >= start; R--) {
       const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
       if (!RECAP_SECTIONS.includes(label)) continue
@@ -769,8 +763,8 @@ function LockProduction() {
       ])
       if (isCancelled?.()) return
       setFileFillCounts({ sang: sang.length, toi: toi.length })
-      let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
-      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
+      let classifyInfo = { keywords: { dsc: [], xuLi: [], vs: [] } }
+      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { keywords: { dsc: [], xuLi: [], vs: [] } } }
       if (isCancelled?.()) return
       const dateLabel = dayjs(dateStr).format('DD/MM/YYYY')
       const data = []
@@ -847,30 +841,43 @@ function LockProduction() {
     const items = locksOfShift.flatMap(l => l.items || [])
     const containerNos = [...new Set(items.map(i => i.containerNo).filter(Boolean))]
     let createdMap = {}
+    let remarkMap = {}
     if (containerNos.length) {
       try {
         const cres = await api.post('/containers/by-nos', { containerNos })
+        const latestMap = {}
         ;(cres.data || []).forEach(c => {
-          if (c.containerNo && c.createdAt) createdMap[c.containerNo] = c.createdAt
+          const cn = String(c.containerNo || '').toUpperCase().trim()
+          if (!cn) return
+          if (c.createdAt) createdMap[cn] = c.createdAt
+          const stamp = c.updatedAt ? dayjs(c.updatedAt).valueOf() : (c.createdAt ? dayjs(c.createdAt).valueOf() : 0)
+          if (!latestMap[cn] || stamp >= latestMap[cn].stamp) latestMap[cn] = { stamp, remark: c.remark }
         })
+        if (lockType === 'container') {
+          Object.entries(latestMap).forEach(([cn, v]) => {
+            if (v.remark !== undefined && v.remark !== null && String(v.remark).trim() !== '') remarkMap[cn] = v.remark
+          })
+        }
       } catch {
         createdMap = {}
+        remarkMap = {}
       }
     }
-    return items.map(i => ({ ...i, _createdAt: createdMap[i.containerNo] || null }))
+    return items.map(i => {
+      const cn = String(i.containerNo || '').toUpperCase().trim()
+      const lockRemark = i.remark
+      const hasLockRemark = lockRemark !== undefined && lockRemark !== null && String(lockRemark).trim() !== ''
+      return {
+        ...i,
+        remark: hasLockRemark ? lockRemark : (remarkMap[cn] !== undefined ? remarkMap[cn] : lockRemark),
+        _createdAt: createdMap[cn] || null,
+      }
+    })
   }
 
   const fetchClassifyInfo = async () => {
-    const [slRes, clsRes] = await Promise.all([
-      api.get('/shipping-lists'),
-      api.get('/classification').catch(() => ({ data: {} })),
-    ])
-    const map = {}
-    flattenSlItems(slRes.data || []).forEach(i => {
-      if (i.containerNo) map[String(i.containerNo).toUpperCase().trim()] = i
-    })
+    const clsRes = await api.get('/classification').catch(() => ({ data: {} }))
     return {
-      map,
       keywords: { dsc: clsRes.data?.dsc || [], xuLi: clsRes.data?.xuLi || [], vs: clsRes.data?.vs || [] },
     }
   }
@@ -884,14 +891,14 @@ function LockProduction() {
     }
   }
 
-  const fillRecapBlock = (ws, aoa, startRow, endRow, items, classifyMap, keywords, dateLabel, timeLabel) => {
+  const fillRecapBlock = (ws, aoa, startRow, endRow, items, keywords, dateLabel, timeLabel) => {
     for (let R = startRow; R <= Math.min(startRow + 3, endRow); R++) {
       if (String(aoa[R]?.[0] || '').trim().startsWith('NGÀY')) {
         ws[XLSX.utils.encode_cell({ r: R, c: 0 })] = { t: 's', v: `NGÀY ${dateLabel} ${timeLabel}` }
         break
       }
     }
-    const { bucket } = buildRecapData(items, classifyMap, keywords)
+    const { bucket } = buildRecapData(items, keywords)
     const sizeColTotals = { '20DC': 0, '22RF': 0, '40DC': 0, '45RF': 0 }
     for (let R = startRow; R <= endRow; R++) {
       const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
@@ -932,8 +939,8 @@ function LockProduction() {
     }
   }
 
-  const addMissingDepotLines = (ws, aoa, items, classifyMap, keywords) => {
-    const { lines } = buildDepotRecapData(items, classifyMap, keywords)
+  const addMissingDepotLines = (ws, aoa, items, keywords) => {
+    const { lines } = buildDepotRecapData(items, keywords)
     const personnelRow = findDepotPersonnelRow(aoa)
     const sectionRows = []
     aoa.forEach((r, i) => {
@@ -999,16 +1006,16 @@ function LockProduction() {
     ws['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 10 }, { wch: 26 }]
   }
 
-  const fillDepotRecap = (ws, items, classifyMap, keywords, dateLabel) => {
+  const fillDepotRecap = (ws, items, keywords, dateLabel) => {
     if (!ws) throw new Error('Không tìm thấy sheet RECAP')
     let aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
     const ngayRow = aoa.findIndex(r => String(r?.[0] || '').trim().toUpperCase().startsWith('NGÀY'))
     if (ngayRow >= 0) ws[XLSX.utils.encode_cell({ r: ngayRow, c: 0 })] = { t: 's', v: `NGÀY ${dateLabel}` }
 
-    addMissingDepotLines(ws, aoa, items, classifyMap, keywords)
+    addMissingDepotLines(ws, aoa, items, keywords)
     aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
 
-    const { bucket } = buildDepotRecapData(items, classifyMap, keywords)
+    const { bucket } = buildDepotRecapData(items, keywords)
     const totals = Object.fromEntries(DEPOT_SIZE_COLS.map(g => [g, 0]))
     const personnelRow = findDepotPersonnelRow(aoa)
 
@@ -1079,7 +1086,7 @@ function LockProduction() {
     ws['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 10 }]
   }
 
-  const fillWorkbook = (wb, file, sang, toi, { map: classifyMap, keywords }, dateLabel, dateStr) => {
+  const fillWorkbook = (wb, file, sang, toi, { keywords }, dateLabel, dateStr) => {
     const isDepot = file.name.includes('DEPOT')
     if (isDepot) {
       const allItems = [...sang, ...toi]
@@ -1088,7 +1095,7 @@ function LockProduction() {
         fillDepotDaily(ws, allItems, dateLabel, excelSerialFromISODate(dateStr))
       } else {
         const ws = wb.Sheets['RECAP'] || wb.Sheets[wb.SheetNames[0]]
-        fillDepotRecap(ws, allItems, classifyMap, keywords, dateLabel)
+        fillDepotRecap(ws, allItems, keywords, dateLabel)
       }
       return
     }
@@ -1136,7 +1143,7 @@ function LockProduction() {
         { items: sang, timeLabel: 'TỪ 06H00' },
         { items: toi, timeLabel: 'TỪ 18H00' },
       ]
-      addMissingRecapLines(ws, aoa, titleRows, shiftData, classifyMap, keywords)
+      addMissingRecapLines(ws, aoa, titleRows, shiftData, keywords)
       aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
       titleRows = findTitleRows()
       const headerRows = new Set()
@@ -1144,7 +1151,7 @@ function LockProduction() {
       titleRows.forEach((start, idx) => {
         const end = idx < titleRows.length - 1 ? titleRows[idx + 1] - 1 : aoa.length - 1
         const sd = shiftData[idx] || shiftData[0]
-        fillRecapBlock(ws, aoa, start, end, sd.items, classifyMap, keywords, dateLabel, sd.timeLabel)
+        fillRecapBlock(ws, aoa, start, end, sd.items, keywords, dateLabel, sd.timeLabel)
         for (let R = start; R <= end; R++) {
           const label = String(aoa[R]?.[0] || '').trim().toUpperCase()
           if (RECAP_SECTIONS.includes(label)) headerRows.add(R)
@@ -1194,9 +1201,9 @@ function LockProduction() {
       message.warning(`Không có phiếu sản lượng nào ngày ${dateLabel}`)
       return null
     }
-    let classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } }
+    let classifyInfo = { keywords: { dsc: [], xuLi: [], vs: [] } }
     if (!isDaily) {
-      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { map: {}, keywords: { dsc: [], xuLi: [], vs: [] } } }
+      try { classifyInfo = await fetchClassifyInfo() } catch { classifyInfo = { keywords: { dsc: [], xuLi: [], vs: [] } } }
     }
     const res = await fetch(file.url)
     if (!res.ok) throw new Error('Không tải được template')
