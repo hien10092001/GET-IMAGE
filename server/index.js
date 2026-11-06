@@ -1,4 +1,7 @@
 import 'dotenv/config'
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import express from 'express'
 import cors from 'cors'
 import mongoose from 'mongoose'
@@ -12,6 +15,7 @@ import classificationRoutes from './routes/classification.js'
 import sanLuongHTRoutes from './routes/sanLuongHT.js'
 import cleanupRoutes from './routes/cleanup.js'
 import emailRoutes from './routes/email.js'
+import referenceRoutes from './routes/references.js'
 import User from './models/User.js'
 
 const app = express()
@@ -31,6 +35,17 @@ app.use('/api/classification', classificationRoutes)
 app.use('/api/sanluong-ht', sanLuongHTRoutes)
 app.use('/api/cleanup', cleanupRoutes)
 app.use('/api/email', emailRoutes)
+app.use('/api/references', referenceRoutes)
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const distPath = path.resolve(__dirname, '../dist')
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath))
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+}
 
 async function seedAdmin() {
   const exists = await User.findOne({ username: 'admin' })

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import Classification from '../models/Classification.js'
+import { authMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -15,7 +16,7 @@ router.get('/', async (_req, res) => {
   }
 })
 
-router.put('/', async (req, res) => {
+router.put('/', authMiddleware, async (req, res) => {
   try {
     const { dsc, xuLi, vs } = req.body
     const doc = await Classification.findOneAndUpdate(

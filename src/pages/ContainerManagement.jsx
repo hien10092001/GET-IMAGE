@@ -5,6 +5,7 @@ const XLSX = window.XLSX
 import dayjs from 'dayjs'
 const ensureBayPrefix = v => { const s = (v || '').toUpperCase().trim(); return s ? (s.startsWith('BAY ') ? s : 'BAY ' + s) : s }
 import api from '../services/api'
+import useSharedReference from '../hooks/useSharedReference'
 
 const { Option } = Select
 
@@ -25,9 +26,7 @@ function ContainerManagement() {
   const [viewOpen, setViewOpen] = useState(false)
   const [viewItem, setViewItem] = useState(null)
   const [viewRefOpen, setViewRefOpen] = useState(false)
-  const [referenceData, setReferenceData] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('containerRef') || '[]') } catch { return [] }
-  })
+  const [referenceData, setReferenceData] = useSharedReference('container', 'ref', 'containerRef')
   const [selectedExportFields, setSelectedExportFields] = useState({
     containerNo: true,
     shippingLine: false,
@@ -70,12 +69,8 @@ function ContainerManagement() {
   const [locationHistory, setLocationHistory] = useState({})
   const [locationOptions, setLocationOptions] = useState([])
   const [modalLocationOptions, setModalLocationOptions] = useState([])
-  const [locationList, setLocationList] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('locationList') || '[]') } catch { return [] }
-  })
-  const [remarkList, setRemarkList] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('remarkList') || '[]') } catch { return [] }
-  })
+  const [locationList, setLocationList] = useSharedReference('global', 'location', 'locationList')
+  const [remarkList, setRemarkList] = useSharedReference('global', 'remark', 'remarkList')
   const [locationListOpen, setLocationListOpen] = useState(false)
   const [remarkListOpen, setRemarkListOpen] = useState(false)
   const [editingListItem, setEditingListItem] = useState(null)
@@ -104,18 +99,6 @@ function ContainerManagement() {
   const [lockEditing, setLockEditing] = useState(null)
   const [lockEditSubmitting, setLockEditSubmitting] = useState(false)
   const [lockEditForm] = Form.useForm()
-
-  useEffect(() => {
-    localStorage.setItem('containerRef', JSON.stringify(referenceData))
-  }, [referenceData])
-
-  useEffect(() => {
-    localStorage.setItem('locationList', JSON.stringify(locationList))
-  }, [locationList])
-
-  useEffect(() => {
-    localStorage.setItem('remarkList', JSON.stringify(remarkList))
-  }, [remarkList])
 
   useEffect(() => {
     return () => {

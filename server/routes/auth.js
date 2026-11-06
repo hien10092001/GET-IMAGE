@@ -1,10 +1,10 @@
 import { Router } from 'express'
 import User from '../models/User.js'
-import { generateToken, authMiddleware } from '../middleware/auth.js'
+import { generateToken, authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
-router.post('/register', async (req, res) => {
+router.post('/register', authMiddleware, roleMiddleware('Admin'), async (req, res) => {
   try {
     const { username, password, role } = req.body
     if (!username || !password) {

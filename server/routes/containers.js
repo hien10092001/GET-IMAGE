@@ -34,7 +34,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 })
 
-router.get('/', authMiddleware, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt' } = req.query
     const query = {}
