@@ -6,6 +6,16 @@ import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const toDateKey = (value) => {
+  if (!value) return ''
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
@@ -36,9 +46,15 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt' } = req.query
-    const query = {}
+    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt', includeLocks } = req.query
+    const pageNum = Math.max(parseInt(page) || 1, 1)
+    const limitNum = Math.max(parseInt(limit) || 20, 1)
+    const skip = (pageNum - 1) * limitNum
+    const mergeLocks = includeLocks === '1' || includeLocks === 'true' || !!search
+    const sortKey = sort.startsWith('-') ? sort.slice(1) : sort
+    const sortDir = sort.startsWith('-') ? -1 : 1
 
+    const query = {}
     if (search) {
       query.$or = [
         { containerNo: { $regex: search, $options: 'i' } },
@@ -60,127 +76,143 @@ router.get('/', async (req, res) => {
       if (dateTo) {
         const end = new Date(dateTo)
         end.setDate(end.getDate() + 1)
-        query.createdAt.$lte = end
+        query.createdAt.$lt = end
       }
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit)
     const sortObj = {}
-    if (sort.startsWith('-')) {
-      sortObj[sort.slice(1)] = -1
+    sortObj[sortKey] = sortDir
+
+    let containers
+    let total
+    if (mergeLocks) {
+      containers = await Container.find(query).sort(sortObj).lean()
+      total = containers.length
     } else {
-      sortObj[sort] = 1
+      const result = await Promise.all([
+        Container.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
+        Container.countDocuments(query),
+      ])
+      containers = result[0]
+      total = result[1]
     }
 
-    const [containers, total] = await Promise.all([
-      Container.find(query).sort(sortObj).skip(skip).limit(parseInt(limit)).lean(),
-      Container.countDocuments(query),
-    ])
+    let lockItems = []
+    if (mergeLocks && locked !== 'false') {
+      const lockMatch = { type: 'container' }
+      if (dateFrom || dateTo) {
+        lockMatch.date = {}
+        if (dateFrom) lockMatch.date.$gte = dateFrom
+        if (dateTo) lockMatch.date.$lte = dateTo
+      }
 
-    const containerNos = containers.map(c => c.containerNo)
-    const shippingLists = containerNos.length
+      const itemMatch = {}
+      if (search) {
+        itemMatch.$or = [
+          { 'items.containerNo': { $regex: search, $options: 'i' } },
+          { 'items.shippingLine': { $regex: search, $options: 'i' } },
+          { 'items.location': { $regex: search, $options: 'i' } },
+        ]
+      }
+      if (shippingLine) itemMatch['items.shippingLine'] = { $regex: `^${escapeRegex(shippingLine)}$`, $options: 'i' }
+      if (size) itemMatch['items.size'] = { $regex: `^${escapeRegex(size)}$`, $options: 'i' }
+      if (location) itemMatch['items.location'] = { $regex: escapeRegex(location), $options: 'i' }
+      if (remark) itemMatch['items.remark'] = { $regex: escapeRegex(remark), $options: 'i' }
+
+      const pipeline = [
+        { $match: lockMatch },
+        { $unwind: '$items' },
+      ]
+      if (Object.keys(itemMatch).length) pipeline.push({ $match: itemMatch })
+      pipeline.push({
+        $project: {
+          _id: { $toString: '$items._id' },
+          lockId: { $toString: '$_id' },
+          containerNo: '$items.containerNo',
+          shippingLine: '$items.shippingLine',
+          size: '$items.size',
+          location: '$items.location',
+          remark: '$items.remark',
+          bay: '$items.bay',
+          locked: { $literal: true },
+          lockDate: '$date',
+          lockShift: '$shift',
+          _source: { $literal: 'lock' },
+          createdAt: { $toDate: '$date' },
+        },
+      })
+
+      const lockDocs = await ProductionLock.aggregate(pipeline).catch(() => [])
+      const seen = new Set()
+      lockItems = lockDocs.filter((item) => {
+        const key = `${item.containerNo}|${item.lockDate}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    }
+
+    let data
+    let finalTotal
+    if (mergeLocks) {
+      const lockKeys = new Set(lockItems.map((item) => `${item.containerNo}|${item.lockDate}`))
+      const containerRows = containers
+        .filter((item) => !lockKeys.has(`${item.containerNo}|${toDateKey(item.createdAt)}`))
+        .map((item) => ({ ...item, _source: 'container' }))
+      data = [...containerRows, ...lockItems]
+      data.sort((a, b) => {
+        const av = a[sortKey]
+        const bv = b[sortKey]
+        if (sortKey === 'createdAt') {
+          const at = av ? new Date(av).getTime() : 0
+          const bt = bv ? new Date(bv).getTime() : 0
+          return (at - bt) * sortDir
+        }
+        if (typeof av === 'string' && typeof bv === 'string') {
+          return av.localeCompare(bv, 'vi') * sortDir
+        }
+        if (av === bv) return 0
+        if (av == null) return 1 * sortDir
+        if (bv == null) return -1 * sortDir
+        return (av > bv ? 1 : -1) * sortDir
+      })
+      finalTotal = data.length
+      data = data.slice(skip, skip + limitNum)
+    } else {
+      data = containers.map((item) => ({ ...item, _source: 'container' }))
+      finalTotal = total
+    }
+
+    const pageContainerNos = data.map((item) => item.containerNo)
+    const shippingLists = pageContainerNos.length
       ? await ShippingList.find(
-          { 'items.containerNo': { $in: containerNos } },
+          { 'items.containerNo': { $in: pageContainerNos } },
           { name: 1, 'items.containerNo': 1 }
         ).lean()
       : []
 
     const containerListMap = {}
-    shippingLists.forEach(sl => {
-      sl.items.forEach(item => {
+    shippingLists.forEach((shippingList) => {
+      shippingList.items.forEach((item) => {
         if (!containerListMap[item.containerNo]) {
           containerListMap[item.containerNo] = []
         }
-        if (!containerListMap[item.containerNo].some(l => l._id.equals(sl._id))) {
-          containerListMap[item.containerNo].push({ _id: sl._id, name: sl.name })
+        if (!containerListMap[item.containerNo].some((entry) => entry._id.equals(shippingList._id))) {
+          containerListMap[item.containerNo].push({ _id: shippingList._id, name: shippingList.name })
         }
       })
     })
 
-    let data = containers.map(c => ({
-      ...c,
-      shippingLists: containerListMap[c.containerNo] || [],
-      _source: 'container',
+    data = data.map((item) => ({
+      ...item,
+      shippingLists: containerListMap[item.containerNo] || [],
     }))
 
-    // When search is present, also include matching items from production locks
-    let allData = data
-    let finalTotal = total
-    if (search) {
-      const itemsMatch = {
-        $or: [
-          { 'items.containerNo': { $regex: search, $options: 'i' } },
-          { 'items.shippingLine': { $regex: search, $options: 'i' } },
-          { 'items.location': { $regex: search, $options: 'i' } },
-        ],
-      }
-      const lockDocs = await ProductionLock.aggregate([
-        { $match: itemsMatch },
-        { $unwind: '$items' },
-        { $match: itemsMatch },
-        {
-          $project: {
-            _id: { $toString: '$items._id' },
-            lockId: { $toString: '$_id' },
-            containerNo: '$items.containerNo',
-            shippingLine: '$items.shippingLine',
-            size: '$items.size',
-            location: '$items.location',
-            remark: '$items.remark',
-            bay: '$items.bay',
-            locked: { $literal: true },
-            lockDate: '$date',
-            lockShift: '$shift',
-            _source: { $literal: 'lock' },
-            createdAt: { $toDate: '$date' },
-          },
-        },
-        { $sort: { lockDate: -1 } },
-      ]).catch(() => [])
-
-      const lockContainerNos = [...new Set(lockDocs.map(i => i.containerNo))]
-      const lockListMap = {}
-      if (lockContainerNos.length) {
-        const lockShippingLists = await ShippingList.find(
-          { 'items.containerNo': { $in: lockContainerNos } },
-          { name: 1, 'items.containerNo': 1 }
-        ).lean()
-        lockShippingLists.forEach(sl => {
-          sl.items.forEach(item => {
-            if (!lockListMap[item.containerNo]) {
-              lockListMap[item.containerNo] = []
-            }
-            if (!lockListMap[item.containerNo].some(l => l._id.equals(sl._id))) {
-              lockListMap[item.containerNo].push({ _id: sl._id, name: sl.name })
-            }
-          })
-        })
-      }
-
-      let lockItems = lockDocs
-        .map(item => ({
-          ...item,
-          shippingLists: lockListMap[item.containerNo] || [],
-        }))
-
-      if (locked === 'false') {
-        lockItems = []
-      }
-
-      if (lockItems.length) {
-        const lockNos = new Set(lockItems.map(i => i.containerNo))
-        data = data.filter(c => !lockNos.has(c.containerNo))
-      }
-
-      allData = [...data, ...lockItems]
-      finalTotal = data.length + lockItems.length
-    }
-
     res.json({
-      data: allData,
+      data,
       total: finalTotal,
-      page: parseInt(page),
-      totalPages: Math.ceil(finalTotal / parseInt(limit)),
+      page: pageNum,
+      totalPages: Math.ceil(finalTotal / limitNum),
     })
   } catch (err) {
     res.status(500).json({ message: err.message })

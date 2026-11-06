@@ -16,7 +16,10 @@ import sanLuongHTRoutes from './routes/sanLuongHT.js'
 import cleanupRoutes from './routes/cleanup.js'
 import emailRoutes from './routes/email.js'
 import referenceRoutes from './routes/references.js'
+import publicImageRoutes from './routes/publicImages.js'
 import User from './models/User.js'
+
+if (!process.env.UV_THREADPOOL_SIZE) process.env.UV_THREADPOOL_SIZE = '64'
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -36,6 +39,7 @@ app.use('/api/sanluong-ht', sanLuongHTRoutes)
 app.use('/api/cleanup', cleanupRoutes)
 app.use('/api/email', emailRoutes)
 app.use('/api/references', referenceRoutes)
+app.use('/api/public-images', publicImageRoutes)
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const distPath = path.resolve(__dirname, '../dist')

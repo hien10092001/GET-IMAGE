@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { ConfigProvider, Layout, Card, Table, Input, Select, DatePicker, AutoComplete, Tag, Typography, Tabs, Alert, Space } from 'antd'
-import { SearchOutlined, ReloadOutlined } from '@ant-design/icons'
+import { ConfigProvider, Layout, Card, Table, Input, Select, DatePicker, AutoComplete, Tag, Typography, Tabs, Alert, Space, Button, Modal, Image, Spin, Empty } from 'antd'
+import { SearchOutlined, ReloadOutlined, EyeOutlined, DownloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../services/api'
 
@@ -22,6 +22,12 @@ function PublicLookup() {
   const [dateRange, setDateRange] = useState(null)
   const [locationList, setLocationList] = useState([])
   const [remarkList, setRemarkList] = useState([])
+  const [imgOpen, setImgOpen] = useState(false)
+  const [imgLoading, setImgLoading] = useState(false)
+  const [imgFiles, setImgFiles] = useState([])
+  const [imgTitle, setImgTitle] = useState('')
+  const [imgDate, setImgDate] = useState('')
+  const [imgNotice, setImgNotice] = useState('')
   const searchTimerRef = useRef(null)
 
   useEffect(() => {
@@ -36,7 +42,8 @@ function PublicLookup() {
   const fetchData = () => {
     setLoading(true)
     setError('')
-    const params = { page, limit: pageSize, sort: 'createdAt' }
+    const params = { page, limit: pageSize, sort: '-createdAt' }
+    if (type === 'containers') params.includeLocks = 1
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
@@ -79,6 +86,64 @@ function PublicLookup() {
     setPage(1)
   }
 
+  const openImages = async (record) => {
+    const scope = 'containers'
+    const date = record.createdAt ? dayjs(record.createdAt).format('YYYY-MM-DD') : ''
+    setImgTitle(record.containerNo)
+    setImgDate(date)
+    setImgOpen(true)
+    setImgLoading(true)
+    setImgFiles([])
+    setImgNotice('')
+    try {
+      const params = {}
+      if (date) params.date = date
+      const res = await api.get(`/public-images/${scope}/${record.containerNo}`, { params })
+      setImgFiles(res.data.files || [])
+      setImgNotice(res.data.message || '')
+    } catch (err) {
+      setImgNotice(err.response?.data?.message || 'Không tải được hình ảnh')
+    } finally {
+      setImgLoading(false)
+    }
+  }
+
+  const imageSrc = (file) => {
+    const base = (api.defaults.baseURL || '').replace(/\/+$/, '')
+    return file.path.startsWith('http') ? file.path : `${base}${file.path}`
+  }
+
+  const downloadUrl = (group) => {
+    const base = (api.defaults.baseURL || '').replace(/\/+$/, '')
+    const params = new URLSearchParams({ scope: 'containers', containerNo: imgTitle })
+    if (imgDate) params.set('date', imgDate)
+    if (group) params.set('group', group)
+    return `${base}/public-images/download?${params.toString()}`
+  }
+
+  const triggerDownload = (group) => {
+    const link = document.createElement('a')
+    link.href = downloadUrl(group)
+    link.rel = 'noopener'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+  }
+
+  const groupLabel = (group) => {
+    const parts = String(group || '').split('/').filter(Boolean)
+    const last = parts[parts.length - 1] || ''
+    if (parts.length > 1 && last.toUpperCase().includes(imgTitle.toUpperCase())) parts.pop()
+    return parts.length ? parts.join(' › ') : 'Hình container'
+  }
+
+  const groupedFiles = imgFiles.reduce((acc, file) => {
+    const key = file.group || file.folder || 'Khác'
+    if (!acc[key]) acc[key] = []
+    acc[key].push(file)
+    return acc
+  }, {})
+
   const columns = [
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 150, fixed: 'left' },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 130 },
@@ -86,6 +151,13 @@ function PublicLookup() {
     { title: 'Phân loại', dataIndex: 'location', key: 'location', width: 170 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 170 },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 100 },
+    ...(type === 'containers' ? [{
+      title: 'Hình ảnh',
+      key: 'images',
+      width: 90,
+      align: 'center',
+      render: (_, record) => <Button type="text" icon={<EyeOutlined />} onClick={() => openImages(record)} />,
+    }] : []),
     {
       title: 'Ngày',
       dataIndex: 'createdAt',
@@ -200,6 +272,51 @@ function PublicLookup() {
               />
             </Space>
           </Card>
+          <Modal
+            title={`${imgTitle} - Hình ảnh`}
+            open={imgOpen}
+            onCancel={() => setImgOpen(false)}
+            footer={null}
+            width={860}
+          >
+            <Spin spinning={imgLoading}>
+              {imgNotice && <Alert type="info" showIcon message={imgNotice} className="mb-3" />}
+              {imgFiles.length > 0 ? (
+                <>
+                  <div className="flex justify-end mb-3">
+                    <Button type="primary" icon={<DownloadOutlined />} onClick={() => triggerDownload()}>
+                      Tải tất cả ({imgFiles.length})
+                    </Button>
+                  </div>
+                  {Object.entries(groupedFiles).map(([group, files]) => (
+                    <div key={group} className="mb-4">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <Text strong>{groupLabel(group)} <Text type="secondary">({files.length})</Text></Text>
+                        <Button size="small" icon={<DownloadOutlined />} onClick={() => triggerDownload(group)}>
+                          Tải nhóm
+                        </Button>
+                      </div>
+                      <Image.PreviewGroup>
+                        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                          {files.map((file, index) => (
+                            <div key={index} className="border rounded p-1">
+                              <Image
+                                src={imageSrc(file)}
+                                alt={file.name}
+                                height={120}
+                                style={{ objectFit: 'cover', width: '100%' }}
+                              />
+                              <div className="text-xs text-gray-500 truncate" title={file.name}>{file.name}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </Image.PreviewGroup>
+                    </div>
+                  ))}
+                </>
+              ) : (!imgLoading && !imgNotice ? <Empty description="Không có hình ảnh" /> : null)}
+            </Spin>
+          </Modal>
         </Content>
       </Layout>
     </ConfigProvider>
