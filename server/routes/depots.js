@@ -1,8 +1,19 @@
 import { Router } from 'express'
 import Depot from '../models/Depot.js'
+import ProductionLock from '../models/ProductionLock.js'
 import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const toDateKey = (value) => {
+  if (!value) return ''
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (number) => String(number).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
@@ -34,9 +45,15 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt' } = req.query
-    const query = {}
+    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt', includeLocks } = req.query
+    const pageNum = Math.max(parseInt(page) || 1, 1)
+    const limitNum = Math.max(parseInt(limit) || 20, 1)
+    const skip = (pageNum - 1) * limitNum
+    const mergeLocks = includeLocks === '1' || includeLocks === 'true' || !!search
+    const sortKey = sort.startsWith('-') ? sort.slice(1) : sort
+    const sortDir = sort.startsWith('-') ? -1 : 1
 
+    const query = {}
     if (search) {
       query.$or = [
         { containerNo: { $regex: search, $options: 'i' } },
@@ -58,33 +75,118 @@ router.get('/', async (req, res) => {
       if (dateTo) {
         const end = new Date(dateTo)
         end.setDate(end.getDate() + 1)
-        query.createdAt.$lte = end
+        query.createdAt.$lt = end
       }
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit)
     const sortObj = {}
-    if (sort.startsWith('-')) {
-      sortObj[sort.slice(1)] = -1
+    sortObj[sortKey] = sortDir
+
+    let depots
+    let total
+    if (mergeLocks) {
+      depots = await Depot.find(query).sort(sortObj).lean()
+      total = depots.length
     } else {
-      sortObj[sort] = 1
+      const result = await Promise.all([
+        Depot.find(query).sort(sortObj).skip(skip).limit(limitNum).lean(),
+        Depot.countDocuments(query),
+      ])
+      depots = result[0]
+      total = result[1]
     }
 
-    const [depots, total] = await Promise.all([
-      Depot.find(query).sort(sortObj).skip(skip).limit(parseInt(limit)).lean(),
-      Depot.countDocuments(query),
-    ])
+    let lockItems = []
+    if (mergeLocks && locked !== 'false') {
+      const lockMatch = { type: 'depot' }
+      if (dateFrom || dateTo) {
+        lockMatch.date = {}
+        if (dateFrom) lockMatch.date.$gte = dateFrom
+        if (dateTo) lockMatch.date.$lte = dateTo
+      }
 
-    let data = depots.map(c => ({
-      ...c,
-      _source: 'depot',
-    }))
+      const itemMatch = {}
+      if (search) {
+        itemMatch.$or = [
+          { 'items.containerNo': { $regex: search, $options: 'i' } },
+          { 'items.shippingLine': { $regex: search, $options: 'i' } },
+          { 'items.location': { $regex: search, $options: 'i' } },
+        ]
+      }
+      if (shippingLine) itemMatch['items.shippingLine'] = { $regex: `^${escapeRegex(shippingLine)}$`, $options: 'i' }
+      if (size) itemMatch['items.size'] = { $regex: `^${escapeRegex(size)}$`, $options: 'i' }
+      if (location) itemMatch['items.location'] = { $regex: escapeRegex(location), $options: 'i' }
+      if (remark) itemMatch['items.remark'] = { $regex: escapeRegex(remark), $options: 'i' }
+
+      const pipeline = [
+        { $match: lockMatch },
+        { $unwind: '$items' },
+      ]
+      if (Object.keys(itemMatch).length) pipeline.push({ $match: itemMatch })
+      pipeline.push({
+        $project: {
+          _id: { $toString: '$items._id' },
+          lockId: { $toString: '$_id' },
+          containerNo: '$items.containerNo',
+          shippingLine: '$items.shippingLine',
+          size: '$items.size',
+          bay: '$items.bay',
+          location: '$items.location',
+          remark: '$items.remark',
+          locked: { $literal: true },
+          lockDate: '$date',
+          lockShift: '$shift',
+          _source: { $literal: 'lock' },
+          createdAt: { $toDate: '$date' },
+        },
+      })
+
+      const lockDocs = await ProductionLock.aggregate(pipeline).catch(() => [])
+      const seen = new Set()
+      lockItems = lockDocs.filter((item) => {
+        const key = `${item.containerNo}|${item.lockDate}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+    }
+
+    let data
+    let finalTotal
+    if (mergeLocks) {
+      const lockKeys = new Set(lockItems.map((item) => `${item.containerNo}|${item.lockDate}`))
+      const depotRows = depots
+        .filter((item) => !lockKeys.has(`${item.containerNo}|${toDateKey(item.createdAt)}`))
+        .map((item) => ({ ...item, _source: 'depot' }))
+      data = [...depotRows, ...lockItems]
+      data.sort((a, b) => {
+        const av = a[sortKey]
+        const bv = b[sortKey]
+        if (sortKey === 'createdAt') {
+          const at = av ? new Date(av).getTime() : 0
+          const bt = bv ? new Date(bv).getTime() : 0
+          return (at - bt) * sortDir
+        }
+        if (typeof av === 'string' && typeof bv === 'string') {
+          return av.localeCompare(bv, 'vi') * sortDir
+        }
+        if (av === bv) return 0
+        if (av == null) return 1 * sortDir
+        if (bv == null) return -1 * sortDir
+        return (av > bv ? 1 : -1) * sortDir
+      })
+      finalTotal = data.length
+      data = data.slice(skip, skip + limitNum)
+    } else {
+      data = depots.map((item) => ({ ...item, _source: 'depot' }))
+      finalTotal = total
+    }
 
     res.json({
       data,
-      total,
-      page: parseInt(page),
-      totalPages: Math.ceil(total / parseInt(limit)),
+      total: finalTotal,
+      page: pageNum,
+      totalPages: Math.ceil(finalTotal / limitNum),
     })
   } catch (err) {
     res.status(500).json({ message: err.message })

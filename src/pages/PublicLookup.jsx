@@ -42,8 +42,7 @@ function PublicLookup() {
   const fetchData = () => {
     setLoading(true)
     setError('')
-    const params = { page, limit: pageSize, sort: '-createdAt' }
-    if (type === 'containers') params.includeLocks = 1
+    const params = { page, limit: pageSize, sort: '-createdAt', includeLocks: 1 }
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
