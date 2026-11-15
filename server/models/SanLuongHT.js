@@ -37,6 +37,11 @@ const sanLuongHTSchema = new mongoose.Schema({
     default: '',
     trim: true,
   },
+  tienApr: {
+    type: String,
+    default: '',
+    trim: true,
+  },
   chiTietSc: {
     type: String,
     default: '',

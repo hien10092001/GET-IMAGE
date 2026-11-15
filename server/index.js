@@ -13,6 +13,7 @@ import lockRoutes from './routes/locks.js'
 import shippingListRoutes from './routes/shippingLists.js'
 import classificationRoutes from './routes/classification.js'
 import sanLuongHTRoutes from './routes/sanLuongHT.js'
+import slScPadRoutes from './routes/slScPad.js'
 import cleanupRoutes from './routes/cleanup.js'
 import emailRoutes from './routes/email.js'
 import referenceRoutes from './routes/references.js'
@@ -36,6 +37,7 @@ app.use('/api/locks', lockRoutes)
 app.use('/api/shipping-lists', shippingListRoutes)
 app.use('/api/classification', classificationRoutes)
 app.use('/api/sanluong-ht', sanLuongHTRoutes)
+app.use('/api/sl-sc-pad', slScPadRoutes)
 app.use('/api/cleanup', cleanupRoutes)
 app.use('/api/email', emailRoutes)
 app.use('/api/references', referenceRoutes)
@@ -56,6 +58,12 @@ async function seedAdmin() {
   if (!exists) {
     await User.create({ username: 'admin', password: 'admin123', role: 'Admin' })
     console.log('Created default admin user (admin / admin123)')
+  }
+
+  const baogia = await User.findOne({ username: 'baogia' })
+  if (!baogia) {
+    await User.create({ username: 'baogia', password: '123456', role: 'User' })
+    console.log('Created baogia user (baogia / 123456)')
   }
 }
 

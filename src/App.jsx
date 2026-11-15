@@ -1,11 +1,12 @@
 import { useState, useRef, lazy, Suspense } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
-import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined, CloseOutlined } from '@ant-design/icons'
+import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined, CloseOutlined, DollarOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import './App.css'
 
 const EstTranslator = lazy(() => import('./pages/EstTranslator'))
+const StarCoolReader = lazy(() => import('./pages/StarCoolReader'))
 
 const { Dragger } = Upload
 const { Title, Text } = Typography
@@ -65,7 +66,9 @@ function App() {
     containers: '#eb2f96',
     sanluong: '#13c2c2',
     sanluonght: '#08979c',
+    slscpad: '#fa8c16',
     est: '#2f54eb',
+    starcool: '#d4380d',
     depots: '#722ed1',
   }
 
@@ -86,6 +89,7 @@ function App() {
     { key: 'compress', icon: <CompressOutlined style={{ color: tabColors.compress }} />, label: <span style={{ color: activeTab === 'compress' ? tabColors.compress : undefined }}>Giảm size hình</span> },
     { key: 'rename', icon: <FolderOpenOutlined style={{ color: tabColors.rename }} />, label: <span style={{ color: activeTab === 'rename' ? tabColors.rename : undefined }}>Đổi tên thư mục</span> },
     { key: 'est', icon: <TranslationOutlined style={{ color: tabColors.est }} />, label: <span style={{ color: activeTab === 'est' ? tabColors.est : undefined }}>Chuyển EST</span> },
+    { key: 'starcool', icon: <ContainerOutlined style={{ color: tabColors.starcool }} />, label: <span style={{ color: activeTab === 'starcool' ? tabColors.starcool : undefined }}>Đọc StarCool</span> },
 {
       key: containerGroupKey,
       icon: <ContainerOutlined style={{ color: tabColors.containers }} />,
@@ -95,6 +99,7 @@ function App() {
         { key: 'depots', icon: <ShopOutlined style={{ color: tabColors.depots }} />, label: <span style={{ color: activeTab === 'depots' ? tabColors.depots : undefined }}>Depot</span> },
         { key: 'sanluong', icon: <LockOutlined style={{ color: tabColors.sanluong }} />, label: <span style={{ color: activeTab === 'sanluong' ? tabColors.sanluong : undefined }}>Sản lượng</span> },
         { key: 'sanluonght', icon: <FileExcelOutlined style={{ color: tabColors.sanluonght }} />, label: <span style={{ color: activeTab === 'sanluonght' ? tabColors.sanluonght : undefined }}>Sản lượng HT</span> },
+        { key: 'slscpad', icon: <DollarOutlined style={{ color: tabColors.slscpad }} />, label: <span style={{ color: activeTab === 'slscpad' ? tabColors.slscpad : undefined }}>SL SC PAD</span> },
       ]
     },  
   ]
@@ -186,7 +191,7 @@ function App() {
             {activeTab === 'dedup' && <ExcelDeduplicator />}
             {activeTab === 'compress' && <ImageCompressor />}
             {activeTab === 'rename' && <RenameSubdirs />}
-            {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong' || activeTab === 'sanluonght') && (
+            {(activeTab === 'containers' || activeTab === 'depots' || activeTab === 'sanluong' || activeTab === 'sanluonght' || activeTab === 'slscpad') && (
               <ProtectedPages activeTab={activeTab} user={user} onLogin={handleLogin} />
             )}
             {activeTab === 'est' && (
@@ -194,11 +199,36 @@ function App() {
                 <EstTranslator />
               </Suspense>
             )}
+            {activeTab === 'starcool' && (
+              <Suspense fallback={<div className="p-8 text-center text-gray-400">Loading...</div>}>
+                <StarCoolReader />
+              </Suspense>
+            )}
           </Content>
         </Layout>
       </Layout>
     </ConfigProvider>
   )
+}
+
+function findCodesInName(nameUpper, codeSet, codeLengths) {
+  const found = []
+  const seen = new Set()
+  if (codeSet.has(nameUpper)) {
+    found.push(nameUpper)
+    seen.add(nameUpper)
+  }
+  for (const len of codeLengths) {
+    if (len <= 0 || len > nameUpper.length) continue
+    for (let i = 0; i + len <= nameUpper.length; i++) {
+      const sub = nameUpper.slice(i, i + len)
+      if (codeSet.has(sub) && !seen.has(sub)) {
+        seen.add(sub)
+        found.push(sub)
+      }
+    }
+  }
+  return found
 }
 
 function ExcelMatcher() {
@@ -284,7 +314,8 @@ function ExcelMatcher() {
     try {
       const counter = { dirsScanned: 0 }
       const unfoundCodes = new Set(excelData)
-      await scanDirectory(sourceDir, '', matches, foundCodes, unfoundCodes, null, counter, onProgress)
+      const codeLengths = [...new Set(excelData.map(code => code.length))]
+      await scanDirectory(sourceDir, '', matches, foundCodes, unfoundCodes, null, counter, onProgress, codeLengths)
 
       const notFound = excelData.filter(code => !foundCodes.has(code))
       setNotFoundCodes(notFound)
@@ -296,7 +327,7 @@ function ExcelMatcher() {
     }
   }
 
-  const scanDirectory = async (dirHandle, path, matches, foundCodes, unfoundCodes, parentHandle, counter, onProgress) => {
+  const scanDirectory = async (dirHandle, path, matches, foundCodes, unfoundCodes, parentHandle, counter, onProgress, codeLengths) => {
     if (unfoundCodes.size === 0) return
 
     const entries = []
@@ -309,22 +340,14 @@ function ExcelMatcher() {
       if (unfoundCodes.size === 0) break
 
       const nameUpper = name.toUpperCase()
+      const matchedCodes = findCodesInName(nameUpper, unfoundCodes, codeLengths)
 
-      let matched = unfoundCodes.has(nameUpper)
-      if (!matched) {
-        for (const code of unfoundCodes) {
-          if (nameUpper.includes(code)) { matched = true; break }
-        }
-      }
-
-      if (matched) {
+      if (matchedCodes.length > 0) {
         const fullPath = path ? `${path}/${name}` : name
         matches.push({ name, handle, fullPath, parentHandle: parentHandle || dirHandle })
-        for (const code of unfoundCodes) {
-          if (nameUpper === code || nameUpper.includes(code)) {
-            foundCodes.add(code)
-            unfoundCodes.delete(code)
-          }
+        for (const code of matchedCodes) {
+          foundCodes.add(code)
+          unfoundCodes.delete(code)
         }
       } else if (handle.kind === 'directory') {
         subDirs.push({ name, handle })
@@ -339,7 +362,7 @@ function ExcelMatcher() {
       if (unfoundCodes.size === 0) break
       const batch = subDirs.slice(i, i + CONCURRENCY)
       await Promise.all(batch.map(d =>
-        scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, matches, foundCodes, unfoundCodes, dirHandle, counter, onProgress)
+        scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, matches, foundCodes, unfoundCodes, dirHandle, counter, onProgress, codeLengths)
       ))
     }
   }
@@ -347,24 +370,38 @@ function ExcelMatcher() {
   const collectAllFiles = async (entry, destDirHandle) => {
     const files = []
     const errors = []
-    if (entry.handle.kind === 'file') {
-      files.push({ srcHandle: entry.handle, destDirHandle, fileName: entry.name })
-    } else if (entry.handle.kind === 'directory') {
-      const newDir = await destDirHandle.getDirectoryHandle(entry.name, { create: true })
-      const entries = []
-      for await (const [name, handle] of entry.handle.entries()) {
-        entries.push({ name, handle })
+
+    const walk = async (current, targetDir) => {
+      if (current.handle.kind === 'file') {
+        files.push({ srcHandle: current.handle, destDirHandle: targetDir, fileName: current.name })
+        return
       }
-      for (const e of entries) {
-        try {
-          const result = await collectAllFiles({ ...e, parentHandle: entry.handle }, newDir)
-          files.push(...result.files)
-          errors.push(...result.errors)
-        } catch (err) {
-          errors.push({ path: e.name, error: err.message })
+
+      let newDir
+      try {
+        newDir = await targetDir.getDirectoryHandle(current.name, { create: true })
+      } catch (err) {
+        errors.push({ path: current.name, error: err.message })
+        return
+      }
+
+      const entries = []
+      try {
+        for await (const [name, handle] of current.handle.entries()) {
+          entries.push({ name, handle })
         }
+      } catch (err) {
+        errors.push({ path: current.name, error: err.message })
+        return
+      }
+
+      const CONCURRENCY = 12
+      for (let i = 0; i < entries.length; i += CONCURRENCY) {
+        await Promise.all(entries.slice(i, i + CONCURRENCY).map(e => walk(e, newDir)))
       }
     }
+
+    await walk(entry, destDirHandle)
     return { files, errors }
   }
 
@@ -383,10 +420,13 @@ function ExcelMatcher() {
 
       const allFiles = []
       const collectErrors = []
-      for (const entry of toCopy) {
-        const result = await collectAllFiles(entry, destDir)
-        allFiles.push(...result.files)
-        collectErrors.push(...result.errors)
+      const COLLECT_BATCH = 4
+      for (let i = 0; i < toCopy.length; i += COLLECT_BATCH) {
+        const results = await Promise.all(toCopy.slice(i, i + COLLECT_BATCH).map(entry => collectAllFiles(entry, destDir)))
+        for (const result of results) {
+          allFiles.push(...result.files)
+          collectErrors.push(...result.errors)
+        }
       }
 
       if (allFiles.length === 0 && collectErrors.length === 0) {
@@ -406,7 +446,7 @@ function ExcelMatcher() {
       setProgress({ current: 0, total })
       setStatus(`Đang chuyển 0/${total} file...`)
 
-      const BATCH = 20
+      const BATCH = 32
       for (let i = 0; i < allFiles.length; i += BATCH) {
         const batch = allFiles.slice(i, i + BATCH)
         const results = await Promise.allSettled(batch.map(async ({ srcHandle, destDirHandle, fileName }) => {
@@ -430,12 +470,15 @@ function ExcelMatcher() {
       if (deleteAfterCopy) {
         setStatus('Đang xóa file nguồn...')
         let deleteErrors = 0
-        for (const entry of toCopy) {
-          try {
-            await entry.parentHandle.removeEntry(entry.name, { recursive: true })
-          } catch {
-            deleteErrors++
-          }
+        const DELETE_BATCH = 8
+        for (let i = 0; i < toCopy.length; i += DELETE_BATCH) {
+          const results = await Promise.allSettled(
+            toCopy.slice(i, i + DELETE_BATCH).map(entry =>
+              entry.parentHandle.removeEntry(entry.name, { recursive: true })
+            )
+          )
+          results.forEach(r => { if (r.status === 'rejected') deleteErrors++ })
+          setStatus(`Đang xóa ${Math.min(i + DELETE_BATCH, toCopy.length)}/${toCopy.length} mục nguồn...`)
         }
         if (deleteErrors > 0) {
           setStatus(`Hoàn thành! Đã chuyển ${copied}/${total} file. Không xóa được ${deleteErrors} mục nguồn.`)

@@ -5,6 +5,7 @@ const ContainerManagement = lazy(() => import('../pages/ContainerManagement'))
 const DepotsManagement = lazy(() => import('../pages/DepotManagement'))
 const LockProduction = lazy(() => import('../pages/LockProduction'))
 const SanLuongHT = lazy(() => import('../pages/SanLuongHT'))
+const SlScPad = lazy(() => import('../pages/SlScPad'))
 
 function ProtectedPages({ activeTab, user, onLogin }) {
   if (!user) {
@@ -21,6 +22,7 @@ function ProtectedPages({ activeTab, user, onLogin }) {
       {activeTab === 'depots' && <DepotsManagement />}
       {activeTab === 'sanluong' && <LockProduction />}
       {activeTab === 'sanluonght' && <SanLuongHT />}
+      {activeTab === 'slscpad' && <SlScPad />}
     </Suspense>
   )
 }

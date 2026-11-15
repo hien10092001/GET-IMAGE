@@ -3,7 +3,7 @@ import { Table, Button, Input, Space, Tag, Modal, Form, Row, Col, Card, Upload, 
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined,
   UploadOutlined, SearchOutlined, FileExcelOutlined, SaveOutlined, CopyOutlined,
-  TranslationOutlined, CalendarOutlined,
+  TranslationOutlined, CalendarOutlined, DollarOutlined, CheckSquareOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../services/api'
@@ -11,8 +11,8 @@ import { aggregateEstResults, convertEstFile, loadEstSettings } from '../service
 
 const XLSX = window.XLSX
 
-const EST_REMARK_OPTIONS = ['SC PAP', 'VS PAP', 'VS PAD', 'SC PAD']
-const DEFAULT_EST_REMARK = 'VS PAD'
+const REMARK_OPTIONS = ['VS PAD', 'SC PAD', 'VS PAP', 'SC PAP']
+const DEFAULT_REMARK = REMARK_OPTIONS[0]
 
 const estRowLines = (row) => {
   const subs = row?.subs?.length ? row.subs : [{ it: row?.it, line: row?.line }]
@@ -60,6 +60,7 @@ const EXPORT_COLUMNS = [
   { key: 'nComplete', title: 'N - COMPLETE', file: 'N - COMPLETE' },
   { key: 'nSc', title: 'N - SC', file: 'N - SC' },
   { key: 'remark', title: 'REMARK', file: 'REMARK' },
+  { key: 'tienApr', title: 'TIEN - APR', file: 'TIEN - APR' },
   { key: 'chiTietSc', title: 'CHI TIẾT SC', file: 'CHI TIẾT SC' },
 ]
 
@@ -106,32 +107,83 @@ const dateValueToText = (v) => {
   return String(v ?? '').trim()
 }
 
+const normalizeHeader = (v) => String(v ?? '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/đ/g, 'd')
+  .replace(/Đ/g, 'D')
+  .replace(/[\s.]/g, '')
+  .toUpperCase()
+
+const normalizeRemark = (value) => {
+  const raw = String(value ?? '').trim()
+  if (!raw) return DEFAULT_REMARK
+  const h = normalizeHeader(raw)
+  const hit = REMARK_OPTIONS.find(o => normalizeHeader(o) === h)
+  if (hit) return hit
+  if (h.startsWith('VS')) return h.includes('PAP') ? 'VS PAP' : 'VS PAD'
+  if (h.startsWith('SC')) return h.includes('PAP') ? 'SC PAP' : 'SC PAD'
+  return DEFAULT_REMARK
+}
+
+const REMARK_SELECT_OPTIONS = REMARK_OPTIONS.map(v => ({ value: v, label: v }))
+
+const isContHeader = (v) => {
+  const h = normalizeHeader(v)
+  if (!h) return false
+  return h === 'CONT' || h === 'CONTNO' || h === 'CONTAINER' || h === 'CONTAINERNO' ||
+    h === 'SOCONT' || h === 'SOCONTAINER' || (h.startsWith('CONT') && h.length <= 15)
+}
+
+const WHL_HEADER_NAMES = [
+  'N-BG', 'NBG', 'NGAYBG', 'NGBG',
+  'N-COMPLETE', 'NCOMPLETE', 'COMPLETE', 'NGAYCOMPLETE', 'NGAYHOANTAT',
+  'N-SC', 'NSC', 'NGAYSC',
+]
+
 const parseRows = (aoa) => {
-  const headerIdx = aoa.findIndex(r =>
-    r.some(c => String(c ?? '').replace(/\s+/g, '').toUpperCase() === 'CONT')
-  )
+  const headerIdx = aoa.findIndex(r => r && r.some(c => isContHeader(c)))
   if (headerIdx < 0) throw new Error('Không tìm thấy cột CONT trong file')
 
-  const header = aoa[headerIdx].map(h => String(h ?? '').replace(/\s+/g, '').toUpperCase())
-  const findCol = (name) => header.findIndex(h => h === name)
+  const header = aoa[headerIdx].map(normalizeHeader)
+  const pickCol = (names, prefix = false) => {
+    for (const name of names) {
+      const index = header.indexOf(name)
+      if (index >= 0) return index
+    }
+    if (prefix) {
+      for (let i = 0; i < header.length; i++) {
+        if (names.some(name => header[i].startsWith(name))) return i
+      }
+    }
+    return -1
+  }
 
-  const nAprCol = findCol('N-APR')
+  const contCol = header.findIndex(h => isContHeader(h))
+  const nAprCol = pickCol(['N-APR', 'NAPR', 'NGAYAPR'])
   const idx = {
-    containerNo: findCol('CONT'),
-    nBg: findCol('N-BG'),
+    containerNo: contCol,
+    nBg: pickCol(['N-BG', 'NBG', 'NGAYBG', 'NGBG', 'NGB'], true),
     nApr: nAprCol >= 0 ? nAprCol : (header[3] === '' ? 3 : -1),
-    sztp: findCol('SZTP'),
-    nComplete: findCol('N-COMPLETE'),
-    nSc: findCol('N-SC'),
-    remark: findCol('REMARK'),
-    chiTietSc: findCol('CHITIETSC'),
+    sztp: pickCol(['SZTP', 'SIZE', 'SZ'], true),
+    nComplete: pickCol(['N-COMPLETE', 'NCOMPLETE', 'COMPLETE', 'NGAYCOMPLETE', 'NGAYHOANTAT'], true),
+    nSc: pickCol(['N-SC', 'NSC', 'NGAYSC'], true),
+    remark: pickCol(['REMARK', 'GHICHU', 'NOTE'], true),
+    chiTietSc: pickCol(['CHITIETSC', 'CHITIET', 'SCDETAIL'], true),
   }
   if (idx.containerNo < 0) throw new Error('Không tìm thấy cột CONT trong file')
 
   const get = (row, i) => (i >= 0 ? row[i] : '')
+  const totalLabels = /^(TONG|TOTAL|CONG)$/
 
   return aoa.slice(headerIdx + 1)
-    .filter(r => r && String(get(r, idx.containerNo) ?? '').trim() !== '')
+    .filter(r => {
+      if (!r) return false
+      const value = String(get(r, idx.containerNo) ?? '').trim()
+      if (!value) return false
+      if (totalLabels.test(normalizeHeader(value))) return false
+      return true
+    })
     .map(r => ({
       containerNo: String(get(r, idx.containerNo) ?? '').trim().toUpperCase(),
       nBg: formatDateValue(get(r, idx.nBg)),
@@ -144,7 +196,24 @@ const parseRows = (aoa) => {
     }))
 }
 
-const tableColumns = (onEdit, onDelete) => [
+const EditableTienCell = ({ value, record, onSave }) => {
+  const commit = (e) => {
+    const next = String(e.target.value ?? '').trim()
+    if (next !== String(value ?? '').trim()) onSave(record, next)
+  }
+  return (
+    <Input
+      size="small"
+      defaultValue={value ?? ''}
+      onBlur={commit}
+      onPressEnter={e => { e.currentTarget.blur() }}
+      placeholder="Nhập..."
+      style={{ width: '100%', textAlign: 'right' }}
+    />
+  )
+}
+
+const tableColumns = (onEdit, onDelete, onSaveTienApr) => [
   { title: 'STT', key: 'stt', width: 60, fixed: 'left', render: (_, __, i) => i + 1 },
   { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 160, fixed: 'left' },
   { title: 'N - BG', dataIndex: 'nBg', key: 'nBg', width: 110, align: 'center' },
@@ -152,7 +221,11 @@ const tableColumns = (onEdit, onDelete) => [
   { title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 90, align: 'center' },
   { title: 'N - COMPLETE', dataIndex: 'nComplete', key: 'nComplete', width: 130, align: 'center' },
   { title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 120, align: 'center' },
-  { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 100, ellipsis: true },
+  { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 100, ellipsis: true, render: v => (v ? normalizeRemark(v) : '-') },
+  {
+    title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 130, align: 'right',
+    render: (v, record) => <EditableTienCell key={`${record._id}-${v ?? ''}`} value={v} record={record} onSave={onSaveTienApr} />,
+  },
   { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 600, render: renderChiTietSc },
   {
     title: 'Hành động', key: 'action', width: 100, fixed: 'right',
@@ -175,6 +248,7 @@ function SanLuongHT() {
   const [items, setItems] = useState([])
   const [search, setSearch] = useState('')
   const [completeRange, setCompleteRange] = useState(null)
+  const [remarkFilter, setRemarkFilter] = useState([])
   const [fileName, setFileName] = useState('')
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -185,6 +259,9 @@ function SanLuongHT() {
   const [activeView, setActiveView] = useState('all')
   const [bulkOpen, setBulkOpen] = useState(false)
   const [bulkSaving, setBulkSaving] = useState(false)
+  const [tienBulkOpen, setTienBulkOpen] = useState(false)
+  const [tienBulkValue, setTienBulkValue] = useState('')
+  const [tienBulkSaving, setTienBulkSaving] = useState(false)
   const [bulkInfo, setBulkInfo] = useState({})
   const [bulkSwitches, setBulkSwitches] = useState({})
   const [estOpen, setEstOpen] = useState(false)
@@ -196,6 +273,14 @@ function SanLuongHT() {
   const [estFileName, setEstFileName] = useState('')
   const [estItContainer, setEstItContainer] = useState(null)
   const [estItChecks, setEstItChecks] = useState({})
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewRows, setPreviewRows] = useState([])
+  const [previewSelectedKeys, setPreviewSelectedKeys] = useState([])
+  const [previewSearch, setPreviewSearch] = useState('')
+  const [previewFileName, setPreviewFileName] = useState('')
+  const [previewSaving, setPreviewSaving] = useState(false)
+  const [previewItKey, setPreviewItKey] = useState(null)
+  const [previewItChecks, setPreviewItChecks] = useState({})
   const [form] = Form.useForm()
   const [bulkForm] = Form.useForm()
 
@@ -214,25 +299,113 @@ function SanLuongHT() {
     try {
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer, { type: 'array' })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true })
-      const rows = parseRows(aoa)
+      const isEstFile = wb.SheetNames.some(name => {
+        const ws = wb.Sheets[name]
+        if (!ws) return false
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true })
+        return aoa.some(r => {
+          if (!r) return false
+          const header = r.map(normalizeHeader)
+          return header.includes('CONTAINER') &&
+            (header.includes('COMPONENTSDETAILS') || header.includes('COMCODE') || header.includes('DATEOFEST'))
+        })
+      })
+      let rows = []
+      if (isEstFile) {
+        const { converted } = await convertEstFile(file, loadEstSettings())
+        rows = aggregateEstResults(converted)
+          .map(r => ({
+            containerNo: String(r.container || '').trim().toUpperCase(),
+            nBg: formatDateValue(r.dateInYard),
+            nApr: '',
+            sztp: String(r.size ?? '').trim(),
+            nComplete: '',
+            nSc: '',
+            remark: DEFAULT_REMARK,
+            chiTietSc: estRowLineText(r),
+            subs: r.subs || [],
+            itChecks: {},
+          }))
+          .filter(r => r.containerNo)
+      } else {
+        const candidates = []
+        const sheetErrors = []
+        for (const name of wb.SheetNames) {
+          const ws = wb.Sheets[name]
+          if (!ws) continue
+          const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true })
+          try {
+            const parsed = parseRows(aoa)
+            if (!parsed.length) {
+              sheetErrors.push(`${name}: không có dòng dữ liệu`)
+              continue
+            }
+            const headerIdx = aoa.findIndex(r => r && r.some(c => isContHeader(c)))
+            const header = headerIdx >= 0 ? aoa[headerIdx].map(normalizeHeader) : []
+            const score = header.filter(h => WHL_HEADER_NAMES.includes(h)).length
+            candidates.push({ name, parsed, score })
+          } catch (err) {
+            sheetErrors.push(`${name}: ${err.message}`)
+          }
+        }
+        if (!candidates.length) {
+          throw new Error(`Không đọc được dữ liệu CONT. ${sheetErrors.join('; ') || 'File không có sheet dữ liệu'}`)
+        }
+        candidates.sort((a, b) => (b.score - a.score) || (b.parsed.length - a.parsed.length))
+        const bestScore = candidates[0].score
+        const chosenSheets = bestScore > 0
+          ? candidates.filter(c => c.score === bestScore)
+          : [candidates[0]]
+        const rowMap = new Map()
+        for (const sheet of chosenSheets) {
+          for (const row of sheet.parsed) {
+            const key = row.containerNo
+            const prev = rowMap.get(key)
+            if (!prev) {
+              rowMap.set(key, row)
+              continue
+            }
+            const merged = { ...prev }
+            for (const [field, value] of Object.entries(row)) {
+              if (field === 'containerNo') continue
+              if (String(value ?? '').trim()) merged[field] = value
+            }
+            rowMap.set(key, merged)
+          }
+        }
+        rows = [...rowMap.values()]
+      }
       if (!rows.length) throw new Error('File không có dòng dữ liệu nào')
       const estMap = new Map(estRows.map(r => [r.container, r]))
-      let matched = 0
-      const enriched = rows.map(r => {
-        const line = estRowLineText(estMap.get(r.containerNo))
-        if (line) matched++
-        return { ...r, chiTietSc: line || r.chiTietSc || '' }
+      const existingMap = new Map(items.map(i => [String(i.containerNo || '').toUpperCase(), i]))
+      const stamp = Date.now()
+      const previewData = rows.map((r, index) => {
+        const estRow = estMap.get(r.containerNo)
+        const subs = r.subs?.length ? r.subs : (estRow?.subs || [])
+        const itChecks = r.itChecks || estRow?.itChecks || {}
+        const line = estRowLineText({ subs, itChecks })
+        const existing = existingMap.get(r.containerNo) || {}
+        return {
+          ...r,
+          _key: `${stamp}-${index}`,
+          updateExisting: true,
+          nBg: r.nBg || existing.nBg || '',
+          nApr: r.nApr || existing.nApr || '',
+          sztp: r.sztp || existing.sztp || '',
+          nComplete: r.nComplete || existing.nComplete || '',
+          nSc: r.nSc || existing.nSc || '',
+          remark: normalizeRemark(r.remark || existing.remark),
+          chiTietSc: line || r.chiTietSc || existing.chiTietSc || '',
+          subs,
+          itChecks,
+        }
       })
-      const res = await api.post('/sanluong-ht/import', { items: enriched })
-      setItems(res.data.items || [])
-      setSelectedRowKeys([])
-      setFileName(file.name)
-      message.success(
-        `Đã lưu ${res.data.imported} container từ ${file.name}` +
-        (matched ? `, ${matched} dòng có chi tiết SC từ EST` : '')
-      )
+      setPreviewRows(previewData)
+      setPreviewSelectedKeys(previewData.map(r => r._key))
+      setPreviewSearch('')
+      setPreviewFileName(file.name)
+      setPreviewOpen(true)
+      message.success(`Đã đọc ${previewData.length} container. Kiểm tra bảng xem trước rồi bấm Lưu.`)
     } catch (err) {
       message.error(err.response?.data?.message || err.message || 'Lỗi đọc file Excel')
     } finally {
@@ -249,11 +422,22 @@ function SanLuongHT() {
         const d = toDayjsValue(i.nComplete)
         if (!d || d.isBefore(from, 'day') || d.isAfter(to, 'day')) return false
       }
+      if (remarkFilter.length && !remarkFilter.includes(normalizeRemark(i.remark))) return false
       if (!q) return true
       return String(i.containerNo || '').toUpperCase().includes(q) ||
-        String(i.remark || '').toUpperCase().includes(q)
+        String(i.remark || '').toUpperCase().includes(q) ||
+        String(i.chiTietSc || '').toUpperCase().includes(q)
     })
-  }, [items, search, completeRange])
+  }, [items, search, completeRange, remarkFilter])
+
+  const remarkOptions = useMemo(() => {
+    const set = new Set(REMARK_OPTIONS)
+    items.forEach(i => {
+      const r = normalizeRemark(i.remark)
+      if (r) set.add(r)
+    })
+    return [...set].sort().map(v => ({ value: v, label: v }))
+  }, [items])
 
   const incompleteItems = useMemo(
     () => items.filter(i => !String(i.nComplete || '').trim() && !String(i.nSc || '').trim()),
@@ -267,6 +451,11 @@ function SanLuongHT() {
 
   const visibleItems = activeView === 'incomplete' ? filteredIncomplete : filtered
 
+  const allVisibleSelected = useMemo(
+    () => visibleItems.length > 0 && visibleItems.every(i => selectedRowKeys.includes(i._id)),
+    [visibleItems, selectedRowKeys]
+  )
+
   const selectedItems = useMemo(
     () => items.filter(i => selectedRowKeys.includes(i._id)),
     [items, selectedRowKeys]
@@ -276,6 +465,206 @@ function SanLuongHT() {
     () => new Set(items.map(i => String(i.containerNo || '').toUpperCase())),
     [items]
   )
+
+  const previewFiltered = useMemo(() => {
+    const q = previewSearch.trim().toUpperCase()
+    if (!q) return previewRows
+    return previewRows.filter(r =>
+      String(r.containerNo || '').toUpperCase().includes(q) ||
+      String(r.remark || '').toUpperCase().includes(q) ||
+      String(r.chiTietSc || '').toUpperCase().includes(q)
+    )
+  }, [previewRows, previewSearch])
+
+  const previewStats = useMemo(() => {
+    let existing = 0
+    let fresh = 0
+    let selected = 0
+    let saveCount = 0
+    const selectedSet = new Set(previewSelectedKeys)
+    for (const row of previewRows) {
+      const isExisting = existingConts.has(String(row.containerNo || '').toUpperCase())
+      if (isExisting) existing++
+      else fresh++
+      if (selectedSet.has(row._key)) {
+        selected++
+        if (!isExisting || row.updateExisting !== false) saveCount++
+      }
+    }
+    return { total: previewRows.length, existing, fresh, selected, saveCount }
+  }, [previewRows, previewSelectedKeys, existingConts])
+
+  const updatePreviewRow = (key, patch) => {
+    setPreviewRows(prev => prev.map(row => (row._key === key ? { ...row, ...patch } : row)))
+  }
+
+  const removePreviewRow = (key) => {
+    setPreviewRows(prev => prev.filter(row => row._key !== key))
+    setPreviewSelectedKeys(prev => prev.filter(item => item !== key))
+  }
+
+  const closePreview = () => {
+    setPreviewOpen(false)
+    setPreviewRows([])
+    setPreviewSelectedKeys([])
+    setPreviewSearch('')
+    setPreviewFileName('')
+    setPreviewItKey(null)
+  }
+
+  const previewItRow = previewRows.find(r => r._key === previewItKey)
+  const previewItSubs = previewItRow?.subs?.length ? previewItRow.subs : []
+
+  const openPreviewIt = (row) => {
+    if (!row?.subs?.length) return
+    setPreviewItKey(row._key)
+    setPreviewItChecks(row.itChecks || {})
+  }
+
+  const applyPreviewIt = () => {
+    if (previewItRow?.subs?.length) {
+      updatePreviewRow(previewItKey, {
+        itChecks: previewItChecks,
+        chiTietSc: estRowLineText({ subs: previewItRow.subs, itChecks: previewItChecks }),
+      })
+    }
+    setPreviewItKey(null)
+  }
+
+  const savePreviewImport = async () => {
+    if (!previewRows.length) return
+    const selectedSet = new Set(previewSelectedKeys)
+    const rowsToSave = previewRows
+      .filter(row => selectedSet.has(row._key))
+      .filter(row => !existingConts.has(String(row.containerNo || '').toUpperCase()) || row.updateExisting !== false)
+    if (!rowsToSave.length) {
+      message.warning('Không có dòng nào cần lưu')
+      return
+    }
+    setPreviewSaving(true)
+    try {
+      const res = await api.post('/sanluong-ht/import', {
+        items: rowsToSave.map(row => ({
+          containerNo: row.containerNo,
+          nBg: row.nBg,
+          nApr: row.nApr,
+          sztp: row.sztp,
+          nComplete: row.nComplete,
+          nSc: row.nSc,
+          remark: normalizeRemark(row.remark),
+          chiTietSc: row.chiTietSc,
+        })),
+      })
+      setItems(res.data.items || [])
+      setSelectedRowKeys([])
+      setFileName(previewFileName)
+      message.success(`Đã lưu ${res.data.imported} container từ ${previewFileName}`)
+      closePreview()
+    } catch (e) {
+      message.error(e.response?.data?.message || e.message || 'Lỗi lưu dữ liệu')
+    } finally {
+      setPreviewSaving(false)
+    }
+  }
+
+  const previewColumns = [
+    {
+      title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 150, fixed: 'left',
+      render: (v, row) => (
+        <Input
+          size="small"
+          value={v}
+          onChange={e => updatePreviewRow(row._key, { containerNo: e.target.value.toUpperCase() })}
+        />
+      ),
+    },
+    {
+      title: 'N - BG', dataIndex: 'nBg', key: 'nBg', width: 105,
+      render: (v, row) => (
+        <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { nBg: e.target.value })} />
+      ),
+    },
+    {
+      title: 'N - APR', dataIndex: 'nApr', key: 'nApr', width: 105,
+      render: (v, row) => (
+        <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { nApr: e.target.value })} />
+      ),
+    },
+    {
+      title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 80,
+      render: (v, row) => (
+        <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { sztp: e.target.value })} />
+      ),
+    },
+    {
+      title: 'N - COMPLETE', dataIndex: 'nComplete', key: 'nComplete', width: 120,
+      render: (v, row) => (
+        <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { nComplete: e.target.value })} />
+      ),
+    },
+    {
+      title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 110,
+      render: (v, row) => (
+        <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { nSc: e.target.value })} />
+      ),
+    },
+    {
+      title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 130,
+      render: (v, row) => (
+        <Select
+          size="small"
+          value={normalizeRemark(v)}
+          options={REMARK_SELECT_OPTIONS}
+          onChange={val => updatePreviewRow(row._key, { remark: val })}
+          style={{ width: '100%' }}
+        />
+      ),
+    },
+    {
+      title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 360,
+      render: (v, row) => (
+        <Space direction="vertical" size={2} style={{ width: '100%' }}>
+          <Input size="small" value={v} onChange={e => updatePreviewRow(row._key, { chiTietSc: e.target.value })} />
+          {row.subs?.length ? (
+            <Button
+              type="link"
+              size="small"
+              icon={<TranslationOutlined />}
+              onClick={() => openPreviewIt(row)}
+              style={{ padding: 0, height: 'auto', alignSelf: 'flex-start' }}
+            >
+              Chọn IT ({row.subs.length})
+            </Button>
+          ) : null}
+        </Space>
+      ),
+    },
+    {
+      title: 'TRẠNG THÁI', key: 'status', width: 140, align: 'center',
+      render: (_, row) => (existingConts.has(String(row.containerNo || '').toUpperCase())
+        ? (
+          <Space size={4}>
+            <Switch
+              size="small"
+              checked={row.updateExisting !== false}
+              onChange={checked => updatePreviewRow(row._key, { updateExisting: checked })}
+            />
+            <span style={{ fontSize: 12 }}>
+              {row.updateExisting !== false ? 'Cập nhật' : 'Bỏ qua'}
+            </span>
+          </Space>
+        )
+        : <Tag color="green">Mới</Tag>),
+    },
+    {
+      title: '', key: 'action', width: 50, align: 'center',
+      render: (_, row) => (
+        <Tooltip title="Xóa khỏi xem trước">
+          <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={() => removePreviewRow(row._key)} />
+        </Tooltip>
+      ),
+    },
+  ]
 
   const estFiltered = useMemo(() => {
     const q = estSearch.trim().toUpperCase()
@@ -326,8 +715,8 @@ function SanLuongHT() {
       render: (v, r) => (
         <Select
           size="small"
-          value={v || DEFAULT_EST_REMARK}
-          options={EST_REMARK_OPTIONS.map(x => ({ value: x, label: x }))}
+          value={v || DEFAULT_REMARK}
+          options={REMARK_SELECT_OPTIONS}
           onChange={val => updateEstRow(r.container, { remark: val })}
           style={{ width: '100%' }}
         />
@@ -380,7 +769,7 @@ function SanLuongHT() {
     try {
       const { converted } = await convertEstFile(file, loadEstSettings())
       const rows = aggregateEstResults(converted)
-        .map(r => ({ ...r, remark: DEFAULT_EST_REMARK, updateExisting: true }))
+        .map(r => ({ ...r, remark: DEFAULT_REMARK, updateExisting: true }))
       setEstRows(rows)
       setEstSelected([])
       setEstSearch('')
@@ -408,7 +797,7 @@ function SanLuongHT() {
           containerNo: r.container,
           nBg,
           sztp: String(r.size ?? '').trim(),
-          remark: r.remark || '',
+          remark: normalizeRemark(r.remark),
           chiTietSc: estRowLineText(r),
         }
         if (existing && r.updateExisting !== false) {
@@ -416,8 +805,9 @@ function SanLuongHT() {
             ...base,
             nBg: base.nBg || existing.nBg || '',
             sztp: base.sztp || existing.sztp || '',
-            remark: base.remark || existing.remark || '',
+            remark: normalizeRemark(base.remark || existing.remark),
             chiTietSc: base.chiTietSc || existing.chiTietSc || '',
+            tienApr: existing.tienApr || '',
             nApr: existing.nApr || '',
             nComplete: existing.nComplete || '',
             nSc: existing.nSc || '',
@@ -473,6 +863,7 @@ function SanLuongHT() {
       nApr: toDayjsValue(record.nApr),
       nComplete: toDayjsValue(record.nComplete),
       nSc: toDayjsValue(record.nSc),
+      remark: normalizeRemark(record.remark),
     })
     setModalOpen(true)
   }
@@ -487,7 +878,8 @@ function SanLuongHT() {
         sztp: String(values.sztp || '').trim(),
         nComplete: dateValueToText(values.nComplete),
         nSc: dateValueToText(values.nSc),
-        remark: String(values.remark || '').trim(),
+        remark: normalizeRemark(values.remark),
+        tienApr: String(values.tienApr || '').trim(),
         chiTietSc: String(values.chiTietSc || '').trim(),
       }
       setSaving(true)
@@ -506,6 +898,16 @@ function SanLuongHT() {
       if (e.response) message.error(e.response.data?.message || 'Lỗi lưu dữ liệu')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleSaveTienApr = async (record, value) => {
+    try {
+      const res = await api.put(`/sanluong-ht/${record._id}`, { ...record, tienApr: value })
+      setItems(prev => prev.map(i => (i._id === record._id ? res.data : i)))
+      message.success('Đã cập nhật TIEN - APR')
+    } catch (e) {
+      message.error(e.response?.data?.message || 'Lỗi cập nhật TIEN - APR')
     }
   }
 
@@ -586,6 +988,34 @@ function SanLuongHT() {
     }
   }
 
+  const openBulkTienApr = () => {
+    setTienBulkValue('')
+    setTienBulkOpen(true)
+  }
+
+  const handleBulkTienApr = async () => {
+    if (!selectedRowKeys.length) return
+    try {
+      setTienBulkSaving(true)
+      const res = await api.post('/sanluong-ht/update-many', {
+        ids: selectedRowKeys,
+        tienApr: tienBulkValue,
+      })
+      setItems(res.data.items || [])
+      setSelectedRowKeys([])
+      setTienBulkOpen(false)
+      message.success(`Đã cập nhật TIEN - APR cho ${res.data.updated} dòng`)
+    } catch (e) {
+      message.error(e.response?.data?.message || 'Lỗi cập nhật TIEN - APR')
+    } finally {
+      setTienBulkSaving(false)
+    }
+  }
+
+  const handleSelectAllVisible = () => {
+    setSelectedRowKeys(visibleItems.map(i => i._id))
+  }
+
   const copySelected = async () => {
     if (!selectedItems.length) return
     const header = ['STT', ...EXPORT_COLUMNS.map(c => c.title)].join('\t')
@@ -597,7 +1027,8 @@ function SanLuongHT() {
       r.sztp || '',
       r.nComplete || '',
       r.nSc || '',
-      r.remark || '',
+      normalizeRemark(r.remark),
+      r.tienApr || '',
       r.chiTietSc || '',
     ].join('\t'))
     try {
@@ -623,20 +1054,21 @@ function SanLuongHT() {
       i.sztp || '',
       i.nComplete || '',
       i.nSc || '',
-      i.remark || '',
+      normalizeRemark(i.remark),
+      i.tienApr || '',
       i.chiTietSc || '',
       '',
     ])
     const aoa = [
-      ['BÁO CÁO WHL 2026', '', '', '', '', '', '', '', '', ''],
+      ['BÁO CÁO WHL 2026', '', '', '', '', '', '', '', '', '', ''],
       header,
       ...body,
     ]
     const ws = XLSX.utils.aoa_to_sheet(aoa)
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }]
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }]
     ws['!cols'] = [
       { wch: 6 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
-      { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 36 }, { wch: 60 }, { wch: 4 },
+      { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 36 }, { wch: 14 }, { wch: 60 }, { wch: 4 },
     ]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
@@ -647,12 +1079,12 @@ function SanLuongHT() {
   const renderTable = (data, emptyText) => (
     <Table
       rowKey="_id"
-      columns={tableColumns(openEdit, handleDelete)}
+      columns={tableColumns(openEdit, handleDelete, handleSaveTienApr)}
       dataSource={data}
       loading={loading}
       size="small"
       bordered
-      scroll={{ x: 1400 }}
+      scroll={{ x: 1540 }}
       rowSelection={{
         selectedRowKeys,
         onChange: setSelectedRowKeys,
@@ -677,7 +1109,7 @@ function SanLuongHT() {
         <Row gutter={[12, 12]} align="middle">
           <Col xs={24} md={9}>
             <Upload.Dragger
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xls,.xlsm,.csv"
               showUploadList={false}
               beforeUpload={handleUpload}
               disabled={uploading}
@@ -691,7 +1123,7 @@ function SanLuongHT() {
           <Col xs={24} md={15}>
             <Space wrap className="w-full">
               <Input
-                placeholder="Tìm theo CONT hoặc REMARK..."
+                placeholder="Tìm theo CONT, REMARK hoặc CHI TIẾT SC..."
                 prefix={<SearchOutlined />}
                 value={search}
                 onChange={e => setSearch(e.target.value)}
@@ -705,6 +1137,16 @@ function SanLuongHT() {
                 onChange={setCompleteRange}
                 allowClear
                 style={{ width: 290 }}
+              />
+              <Select
+                mode="multiple"
+                allowClear
+                placeholder="Lọc REMARK"
+                value={remarkFilter}
+                onChange={setRemarkFilter}
+                options={remarkOptions}
+                maxTagCount="responsive"
+                style={{ minWidth: 200, maxWidth: 320 }}
               />
               <Button type="primary" icon={<PlusOutlined />} onClick={openAdd}>
                 Thêm dòng
@@ -729,11 +1171,22 @@ function SanLuongHT() {
               <Tag color="cyan">Tổng: {items.length}</Tag>
               <Tag color="blue">Hiển thị: {visibleItems.length}</Tag>
               <Tag color="orange">Chưa hoàn tất: {incompleteItems.length}</Tag>
+              <Button
+                size="small"
+                icon={<CheckSquareOutlined />}
+                onClick={handleSelectAllVisible}
+                disabled={!visibleItems.length || allVisibleSelected}
+              >
+                Chọn tất cả ({visibleItems.length})
+              </Button>
               {selectedRowKeys.length > 0 && (
                 <>
                   <Tag color="orange">Đã chọn: {selectedRowKeys.length}</Tag>
                   <Button size="small" type="primary" icon={<CalendarOutlined />} onClick={openBulkDates}>
                     Cập nhật ngày
+                  </Button>
+                  <Button size="small" icon={<DollarOutlined />} onClick={openBulkTienApr}>
+                    TIEN - APR
                   </Button>
                   <Button size="small" icon={<CopyOutlined />} onClick={copySelected}>
                     Copy {selectedRowKeys.length} dòng
@@ -754,7 +1207,7 @@ function SanLuongHT() {
             </div>
           </Col>
         </Row>
-        {uploading && <Alert className="mt-3" type="info" showIcon message="Đang đọc và lưu dữ liệu..." />}
+        {uploading && <Alert className="mt-3" type="info" showIcon message="Đang đọc file Excel..." />}
       </Card>
 
       <Card styles={{ body: { padding: 0 } }}>
@@ -830,6 +1283,32 @@ function SanLuongHT() {
             })}
           </Row>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`Cập nhật TIEN - APR cho ${selectedRowKeys.length} dòng`}
+        open={tienBulkOpen}
+        onOk={handleBulkTienApr}
+        onCancel={() => setTienBulkOpen(false)}
+        okText="Cập nhật"
+        cancelText="Hủy"
+        confirmLoading={tienBulkSaving}
+        okButtonProps={{ icon: <SaveOutlined /> }}
+        destroyOnHidden
+        width={420}
+      >
+        <Alert
+          type="info"
+          showIcon
+          className="mb-3"
+          message="Giá trị này sẽ áp dụng cho tất cả dòng đã chọn (để trống = xóa TIEN - APR)."
+        />
+        <Input
+          value={tienBulkValue}
+          onChange={e => setTienBulkValue(e.target.value)}
+          placeholder="Nhập TIEN - APR"
+          allowClear
+        />
       </Modal>
 
       <Modal
@@ -988,6 +1467,146 @@ function SanLuongHT() {
       </Modal>
 
       <Modal
+        open={previewItKey !== null}
+        title={
+          <Space>
+            <span>Chọn IT — {previewItRow?.containerNo}</span>
+            <Tag color="blue">{previewItSubs.length} IT</Tag>
+          </Space>
+        }
+        width={560}
+        onCancel={() => setPreviewItKey(null)}
+        footer={[
+          <Space key="d">
+            <Button onClick={() => setPreviewItChecks(Object.fromEntries(previewItSubs.map((_, i) => [i, true])))}>
+              Chọn tất cả
+            </Button>
+            <Button onClick={() => setPreviewItChecks(Object.fromEntries(previewItSubs.map((_, i) => [i, false])))}>
+              Bỏ chọn
+            </Button>
+            <Button type="primary" onClick={applyPreviewIt}>Xong</Button>
+          </Space>,
+        ]}
+        destroyOnHidden
+      >
+        <Alert
+          type="info"
+          showIcon
+          className="mb-3"
+          message="Bỏ chọn IT sẽ đưa dòng đó vào phần KO APP trong CHI TIẾT SC."
+        />
+        <Row gutter={[8, 8]}>
+          <Col span={10}>
+            <div className="flex flex-col gap-1 max-h-[320px] overflow-auto pr-2">
+              {previewItSubs.map((s, i) => (
+                <Checkbox
+                  key={i}
+                  checked={previewItChecks[i] !== false}
+                  onChange={e => setPreviewItChecks(prev => ({ ...prev, [i]: e.target.checked }))}
+                >
+                  <span>IT {s.it || i + 1}</span>
+                </Checkbox>
+              ))}
+            </div>
+          </Col>
+          <Col span={14}>
+            <span style={{ fontSize: 12, color: '#888' }}>Xem trước dòng:</span>
+            <div
+              style={{
+                background: '#fafafa', padding: 8, marginTop: 4,
+                fontFamily: 'Consolas, monospace', fontSize: 12,
+                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                maxHeight: 320, overflow: 'auto',
+              }}
+            >
+              {(() => {
+                const kept = previewItSubs.filter((_, i) => previewItChecks[i] !== false).map(s => s.line)
+                const dropped = previewItSubs.filter((_, i) => previewItChecks[i] === false).map(s => s.line)
+                return (
+                  <>
+                    {kept.join(' | ')}
+                    {dropped.length > 0 && (
+                      <>
+                        {kept.length > 0 ? ' | ' : ''}
+                        <span style={{ color: 'red', fontWeight: 'bold' }}>
+                          KO APP:({dropped.join(' | ')})
+                        </span>
+                      </>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </Col>
+        </Row>
+      </Modal>
+
+      <Modal
+        title={<Space><FileExcelOutlined style={{ color: '#08979c' }} /><span>Xem trước import{previewFileName ? ` - ${previewFileName}` : ''}</span></Space>}
+        open={previewOpen}
+        onCancel={closePreview}
+        width={1320}
+        destroyOnHidden
+        footer={[
+          <Button key="cancel" onClick={closePreview}>Hủy</Button>,
+          <Button
+            key="save"
+            type="primary"
+            icon={<SaveOutlined />}
+            loading={previewSaving}
+            disabled={!previewStats.saveCount}
+            onClick={savePreviewImport}
+          >
+            Lưu {previewStats.saveCount} container
+          </Button>,
+        ]}
+      >
+        <div className="flex flex-wrap gap-2 items-center mb-3">
+          <Input
+            placeholder="Tìm CONT / REMARK / CHI TIẾT SC..."
+            prefix={<SearchOutlined />}
+            value={previewSearch}
+            onChange={e => setPreviewSearch(e.target.value)}
+            allowClear
+            style={{ width: 300 }}
+          />
+          <Tag color="cyan">Tổng: {previewStats.total}</Tag>
+          <Tag color="green">Mới: {previewStats.fresh}</Tag>
+          <Tag color="orange">Đã có: {previewStats.existing}</Tag>
+          <Tag color="blue">Đã chọn: {previewStats.selected}</Tag>
+          <Button size="small" onClick={() => setPreviewSelectedKeys(previewFiltered.map(row => row._key))}>
+            Chọn tất cả
+          </Button>
+          <Button size="small" onClick={() => setPreviewSelectedKeys([])}>Bỏ chọn</Button>
+        </div>
+        <Alert
+          type="info"
+          showIcon
+          className="mb-3"
+          message="Có thể sửa trực tiếp từng ô, xóa dòng, bỏ chọn dòng. Dòng 'Đã có' tắt switch sẽ giữ nguyên dữ liệu cũ. TIEN - APR luôn được giữ nguyên khi import."
+        />
+        <Table
+          rowKey="_key"
+          size="small"
+          bordered
+          columns={previewColumns}
+          dataSource={previewFiltered}
+          scroll={{ x: 1300, y: 420 }}
+          rowSelection={{
+            selectedRowKeys: previewSelectedKeys,
+            onChange: setPreviewSelectedKeys,
+            preserveSelectedRowKeys: true,
+          }}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: t => `Tổng ${t} dòng`,
+            pageSizeOptions: [20, 50, 100, 500],
+          }}
+        />
+      </Modal>
+
+      <Modal
         title={editing ? 'Sửa container' : 'Thêm container'}
         open={modalOpen}
         onOk={handleSave}
@@ -1034,8 +1653,11 @@ function SanLuongHT() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item name="remark" label="REMARK">
-            <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="Ghi chú / VS / SC ..." />
+          <Form.Item name="remark" label="REMARK" initialValue={DEFAULT_REMARK}>
+            <Select options={REMARK_SELECT_OPTIONS} placeholder="Chọn REMARK" />
+          </Form.Item>
+          <Form.Item name="tienApr" label="TIEN - APR">
+            <Input placeholder="VD: 1.250.000" />
           </Form.Item>
           <Form.Item name="chiTietSc" label="CHI TIẾT SC">
             <Input.TextArea autoSize={{ minRows: 2, maxRows: 5 }} placeholder="Chi tiết SC (lấy từ kết quả chuyển EST)" />

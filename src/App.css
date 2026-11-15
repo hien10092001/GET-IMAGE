@@ -338,3 +338,12 @@ body {
   color: #1a73e8;
   background: #f8f9fb;
 }
+
+/* SL SC PAD: dòng có tiền hãng tàu = 0 */
+.slscpad-zero-row > td {
+  background-color: #ffd6d6 !important;
+}
+
+.slscpad-zero-row:hover > td {
+  background-color: #ffb8b8 !important;
+}

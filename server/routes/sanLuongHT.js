@@ -123,7 +123,7 @@ router.post('/insert-many', authMiddleware, async (req, res) => {
 
 router.post('/update-many', authMiddleware, async (req, res) => {
   try {
-    const { ids, nApr, nComplete, nSc } = req.body
+    const { ids, nApr, nComplete, nSc, tienApr } = req.body
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ message: 'Chưa chọn dòng để cập nhật' })
     }
@@ -131,6 +131,7 @@ router.post('/update-many', authMiddleware, async (req, res) => {
     if (nApr !== undefined) fields.nApr = String(nApr || '').trim()
     if (nComplete !== undefined) fields.nComplete = String(nComplete || '').trim()
     if (nSc !== undefined) fields.nSc = String(nSc || '').trim()
+    if (tienApr !== undefined) fields.tienApr = String(tienApr || '').trim()
     if (Object.keys(fields).length === 0) {
       return res.status(400).json({ message: 'Không có dữ liệu cập nhật' })
     }
