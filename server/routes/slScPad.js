@@ -84,8 +84,8 @@ const updateHistoryItem = async (historyId, item) => {
   target.sztp = item.sztp
   target.ngaySc = item.ngaySc
   if (item.updateMoney !== false) {
-    target.tienHang = item.tienHang
-    target.tienHungThinh = item.tienHungThinh
+    if (item.updateTienHang !== false) target.tienHang = item.tienHang
+    if (item.updateTienHungThinh !== false) target.tienHungThinh = item.tienHungThinh
   }
   if (item.remark) target.remark = item.remark
   history.count = history.items.length
@@ -98,7 +98,7 @@ const updateHistoryItem = async (historyId, item) => {
 router.get('/produced', authMiddleware, async (req, res) => {
   try {
     const docs = await SlScPad.find({ outputId: { $ne: null } })
-      .select('line containerNo outputId')
+      .select('line containerNo outputId tienHang tienHungThinh')
       .lean()
     const ids = [...new Set(docs.map(d => String(d.outputId)))]
     const histories = await SlScPadHistory.find({ _id: { $in: ids } })
@@ -111,6 +111,8 @@ router.get('/produced', authMiddleware, async (req, res) => {
       containerNo: d.containerNo || '',
       outputId: d.outputId,
       period: periodMap.get(String(d.outputId)) || '',
+      tienHang: round2(d.tienHang),
+      tienHungThinh: round2(d.tienHungThinh),
     })))
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -257,7 +259,11 @@ router.post('/import', authMiddleware, async (req, res) => {
       if (!item.containerNo) continue
       const mode = raw.mode === 'update' ? 'update' : 'new'
       const updateMoney = raw.updateMoney !== false
-      uniqueMap.set(`${item.line}|${item.containerNo}`, { ...item, mode, updateMoney })
+      const updateTienHang = updateMoney && raw.updateTienHang !== false
+      const updateTienHungThinh = updateMoney && raw.updateTienHungThinh !== false
+      uniqueMap.set(`${item.line}|${item.containerNo}`, {
+        ...item, mode, updateMoney, updateTienHang, updateTienHungThinh,
+      })
     }
     const normalized = [...uniqueMap.values()]
     if (!normalized.length) {
@@ -286,10 +292,8 @@ router.post('/import', authMiddleware, async (req, res) => {
         sztp: item.sztp,
         ngaySc: item.ngaySc,
       }
-      if (item.updateMoney !== false) {
-        setFields.tienHang = item.tienHang
-        setFields.tienHungThinh = item.tienHungThinh
-      }
+      if (item.updateTienHang) setFields.tienHang = item.tienHang
+      if (item.updateTienHungThinh) setFields.tienHungThinh = item.tienHungThinh
       if (item.remark) setFields.remark = item.remark
       const key = `${item.line}|${item.containerNo}`
       const existing = existingMap.get(key)

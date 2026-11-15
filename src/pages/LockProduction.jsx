@@ -5,10 +5,10 @@ const XLSX = window.XLSX
 import dayjs from 'dayjs'
 import api from '../services/api'
 import * as XLSXStyle from 'xlsx-js-style'
-import dailyClassifyFileUrl from '../file/FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx?url'
-import recapMnrFileUrl from '../file/RECAP-MNR CANG 19.10.xlsx?url'
-import depotDailyClassifyFileUrl from '../file/FILE PHAN LOẠI DEPOT DAILY 03.11.xlsx?url'
-import depotRecapMnrFileUrl from '../file/RECAP-MNR DEPOT PHƯỚC AN 03.11.xlsx?url'
+import dailyClassifyFileUrl from '../file/SAN LUONG CANG/FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx?url'
+import recapMnrFileUrl from '../file/SAN LUONG CANG/RECAP-MNR CANG 19.10.xlsx?url'
+import depotDailyClassifyFileUrl from '../file/SAN LUONG DEPOT/FILE PHAN LOẠI DEPOT DAILY 03.11.xlsx?url'
+import depotRecapMnrFileUrl from '../file/SAN LUONG DEPOT/RECAP-MNR DEPOT PHƯỚC AN 03.11.xlsx?url'
 
 const CANG_PRODUCTION_FILES = [
   { name: 'FILE PHAN LOẠI CẢNG DAILY 19.10.xlsx', url: dailyClassifyFileUrl },

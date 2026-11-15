@@ -29,6 +29,7 @@ const pad = (n) => String(n).padStart(2, '0')
 
 const toNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (value instanceof Date || typeof value === 'object') return 0
   let text = String(value ?? '').trim()
   if (!text) return 0
   text = text.replace(/[^\d,.-]/g, '')
@@ -48,7 +49,7 @@ const toNumber = (value) => {
       : text.replace(/,/g, '')
   } else if (hasDot) {
     const parts = text.split('.')
-    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {
+    if (parts.length > 2) {
       text = text.replace(/\./g, '')
     }
   }
@@ -166,12 +167,22 @@ const parseWorkbook = async (file) => {
     if (contIdx < 0) continue
     const lineIdx = findIdx(h => h === 'LINE')
     const sztpIdx = findIdx(h => h === 'SZTP' || h === 'SIZE' || h === 'TYPE' || h.includes('SZTP'))
-    const dateIdx = findIdx(h => h === 'NGAYSC' || h.startsWith('NGAY') || h === 'DATE')
+    const isDateHeader = h => h === 'DATE' || h.startsWith('DATE') || h.includes('NGAY') || h.includes('THOIGIAN')
+    const dateIdx = findIdx(isDateHeader)
     const remarkIdx = findIdx(h => h === 'REMARK' || h === 'GHICHU' || h === 'NOTE' || h === 'CHITIET')
-    const hungIdx = findIdx(h => h.includes('HUNGTHINH'))
-    let moneyIdx = findIdx(h => h.includes('SOTIEN') && !h.includes('HUNGTHINH'))
-    if (moneyIdx < 0) moneyIdx = 5
-    const hungCol = hungIdx >= 0 ? hungIdx : 6
+    const isHungHeader = h => h.includes('HUNGTHINH') || (h.includes('HUNG') && h.includes('THINH'))
+    const hungIdx = findIdx(isHungHeader)
+    const moneyMatchers = [
+      h => !isHungHeader(h) && (h.includes('HANGTAU') || h.includes('TENHANGTAU')) && h.includes('TIEN'),
+      h => !isHungHeader(h) && (h.includes('SOTIEN') || h.includes('THANHTIEN') || h.includes('TIEN') || h.includes('CUOC')) && !h.includes('VAT'),
+      h => !isHungHeader(h) && (h.includes('SOTIEN') || h.includes('TIEN') || h.includes('CUOC')),
+    ]
+    let moneyIdx = -1
+    for (const match of moneyMatchers) {
+      moneyIdx = findIdx(match)
+      if (moneyIdx >= 0) break
+    }
+    const hungCol = hungIdx
 
     for (const row of aoa.slice(headerIdx + 1)) {
       if (!row) continue
@@ -186,8 +197,10 @@ const parseWorkbook = async (file) => {
         containerNo: rawCont.toUpperCase(),
         sztp: sztpIdx >= 0 ? String(row[sztpIdx] ?? '').trim() : '',
         ngaySc: dateIdx >= 0 ? parseDateCell(row[dateIdx]) : '',
-        tienHang: round2(toNumber(row[moneyIdx])),
-        tienHungThinh: round2(toNumber(row[hungCol])),
+        tienHang: moneyIdx >= 0 ? round2(toNumber(row[moneyIdx])) : 0,
+        tienHungThinh: hungCol >= 0 ? round2(toNumber(row[hungCol])) : 0,
+        hasTienHang: moneyIdx >= 0,
+        hasTienHungThinh: hungCol >= 0,
         remark: remarkIdx >= 0 ? String(row[remarkIdx] ?? '').trim() : '',
       })
     }
@@ -315,19 +328,38 @@ function SlScPad() {
     [items]
   )
 
+  const existingMap = useMemo(
+    () => new Map(items.map(item => [rowKeyOf(item), item])),
+    [items]
+  )
+
   const handleUpload = async (file) => {
     setUploading(true)
     try {
       const parsed = await parseWorkbook(file)
       if (!parsed.length) throw new Error('Không tìm thấy dữ liệu CONT trong file')
       const stamp = Date.now()
-      const rows = parsed.map((item, index) => ({
-        ...item,
-        _key: `${stamp}-${index}`,
-        updateExisting: true,
-        duplicateMode: 'new',
-        updateMoney: true,
-      }))
+      const rows = parsed.map((item, index) => {
+        const current = existingMap.get(rowKeyOf(item)) || producedMap.get(rowKeyOf(item))
+        const hasTienHang = item.hasTienHang === true
+        const hasTienHungThinh = item.hasTienHungThinh === true
+        return {
+          ...item,
+          _key: `${stamp}-${index}`,
+          tienHang: hasTienHang ? item.tienHang : (Number(current?.tienHang) || 0),
+          tienHungThinh: hasTienHungThinh ? item.tienHungThinh : (Number(current?.tienHungThinh) || 0),
+          hasTienHang,
+          hasTienHungThinh,
+          fileHasMoney: hasTienHang || hasTienHungThinh,
+          oldTienHang: current ? Number(current.tienHang) || 0 : null,
+          oldTienHungThinh: current ? Number(current.tienHungThinh) || 0 : null,
+          updateTienHang: true,
+          updateTienHungThinh: true,
+          updateExisting: true,
+          duplicateMode: 'new',
+          updateMoney: hasTienHang || hasTienHungThinh,
+        }
+      })
       setPreviewRows(rows)
       setPreviewSelectedKeys(rows.map(row => row._key))
       setPreviewFileName(file.name)
@@ -385,6 +417,11 @@ function SlScPad() {
     return { total: previewRows.length, existing, produced, fresh, selected, saveCount }
   }, [previewRows, previewSelectedKeys, existingSet, producedMap])
 
+  const previewNoMoney = useMemo(
+    () => previewRows.length > 0 && previewRows.every(row => row.fileHasMoney === false),
+    [previewRows]
+  )
+
   const savePreview = async () => {
     if (!previewRows.length) return
     const selectedRows = previewRows.filter(row => previewSelectedKeys.includes(row._key))
@@ -409,7 +446,9 @@ function SlScPad() {
           tienHungThinh: row.tienHungThinh,
           remark: row.remark,
           mode: isRowProduced(row) ? row.duplicateMode : 'new',
-          updateMoney: row.updateMoney !== false,
+          updateMoney: row.fileHasMoney !== false,
+          updateTienHang: row.hasTienHang !== false && row.updateTienHang !== false,
+          updateTienHungThinh: row.hasTienHungThinh !== false && row.updateTienHungThinh !== false,
         })),
       })
       setItems(res.data.items || [])
@@ -766,6 +805,37 @@ function SlScPad() {
     }
   }
 
+  const renderPreviewMoney = (row, field, updateField, oldField, hasField) => {
+    const value = Number(row[field]) || 0
+    const oldValue = row[oldField]
+    const changed = hasField && oldValue !== null && oldValue !== undefined &&
+      Math.abs(value - oldValue) > 0.004
+    return (
+      <div>
+        <InputNumber
+          size="small"
+          min={0}
+          step={0.01}
+          value={value}
+          disabled={!hasField}
+          onChange={val => updatePreviewRow(row._key, { [field]: Number(val) || 0, [updateField]: true })}
+          style={{ width: '100%' }}
+        />
+        {changed && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, flexWrap: 'wrap' }}>
+            <Tag color="orange" style={{ margin: 0, fontSize: 11 }}>Cũ: {formatNumber(oldValue)}</Tag>
+            <Switch
+              size="small"
+              checked={row[updateField] !== false}
+              onChange={checked => updatePreviewRow(row._key, { [updateField]: checked })}
+            />
+            <span style={{ fontSize: 11 }}>{row[updateField] !== false ? 'Cập nhật' : 'Giữ cũ'}</span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const previewColumns = [
     { title: 'STT', key: 'stt', width: 55, render: (_, __, i) => i + 1 },
     {
@@ -812,30 +882,14 @@ function SlScPad() {
       ),
     },
     {
-      title: 'TIỀN HÃNG TÀU - PAD', dataIndex: 'tienHang', key: 'tienHang', width: 150,
-      render: (v, row) => (
-        <InputNumber
-          size="small"
-          min={0}
-          step={0.01}
-          value={Number(v) || 0}
-          onChange={val => updatePreviewRow(row._key, { tienHang: Number(val) || 0 })}
-          style={{ width: '100%' }}
-        />
-      ),
+      title: 'TIỀN HÃNG TÀU - PAD', dataIndex: 'tienHang', key: 'tienHang', width: 200,
+      onCell: row => ({ className: Number(row.tienHang) === 0 ? 'slscpad-zero-cell' : '' }),
+      render: (_, row) => renderPreviewMoney(row, 'tienHang', 'updateTienHang', 'oldTienHang', row.hasTienHang !== false),
     },
     {
-      title: 'TIỀN HƯNG THỊNH - PAD', dataIndex: 'tienHungThinh', key: 'tienHungThinh', width: 165,
-      render: (v, row) => (
-        <InputNumber
-          size="small"
-          min={0}
-          step={0.01}
-          value={Number(v) || 0}
-          onChange={val => updatePreviewRow(row._key, { tienHungThinh: Number(val) || 0 })}
-          style={{ width: '100%' }}
-        />
-      ),
+      title: 'TIỀN HƯNG THỊNH - PAD', dataIndex: 'tienHungThinh', key: 'tienHungThinh', width: 220,
+      onCell: row => ({ className: Number(row.tienHungThinh) === 0 ? 'slscpad-zero-cell' : '' }),
+      render: (_, row) => renderPreviewMoney(row, 'tienHungThinh', 'updateTienHungThinh', 'oldTienHungThinh', row.hasTienHungThinh !== false),
     },
     {
       title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 180,
@@ -850,19 +904,9 @@ function SlScPad() {
     {
       title: 'TRẠNG THÁI', key: 'status', width: 240, align: 'center',
       render: (_, row) => {
-        const moneyToggle = (
-          <Space size={4}>
-            <Switch
-              size="small"
-              checked={row.updateMoney !== false}
-              disabled={isRowProduced(row) && row.duplicateMode === 'skip'}
-              onChange={checked => updatePreviewRow(row._key, { updateMoney: checked })}
-            />
-            <span style={{ fontSize: 12 }}>
-              {row.updateMoney !== false ? 'Cập nhật 2 cột tiền' : 'Giữ tiền cũ'}
-            </span>
-          </Space>
-        )
+        const noMoneyNote = row.fileHasMoney === false ? (
+          <Tag color="default" style={{ margin: 0 }}>File không có cột tiền - giữ tiền cũ</Tag>
+        ) : null
         if (isRowProduced(row)) {
           const info = producedInfoOf(row)
           return (
@@ -882,7 +926,7 @@ function SlScPad() {
                 ]}
                 style={{ width: 190 }}
               />
-              {moneyToggle}
+              {noMoneyNote}
             </Space>
           )
         }
@@ -900,11 +944,16 @@ function SlScPad() {
                   {row.updateExisting !== false ? 'Cập nhật' : 'Bỏ qua'}
                 </span>
               </Space>
-              {row.updateExisting !== false && moneyToggle}
+              {row.updateExisting !== false && noMoneyNote}
             </Space>
           )
         }
-        return <Tag color="green">Mới</Tag>
+        return (
+          <Space direction="vertical" size={2}>
+            <Tag color="green">Mới</Tag>
+            {noMoneyNote}
+          </Space>
+        )
       },
     },
     {
@@ -934,11 +983,15 @@ function SlScPad() {
     { title: 'NGÀY SC', dataIndex: 'ngaySc', key: 'ngaySc', width: 120, align: 'center' },
     {
       title: 'SỐ TIỀN HÃNG TÀU - PAD', dataIndex: 'tienHang', key: 'tienHang',
-      width: 180, align: 'right', render: v => formatNumber(v),
+      width: 180, align: 'right',
+      onCell: record => ({ className: Number(record.tienHang) === 0 ? 'slscpad-zero-cell' : '' }),
+      render: v => formatNumber(v),
     },
     {
       title: 'SỐ TIỀN HƯNG THỊNH - PAD (-VAT)', dataIndex: 'tienHungThinh', key: 'tienHungThinh',
-      width: 220, align: 'right', render: v => formatNumber(v),
+      width: 220, align: 'right',
+      onCell: record => ({ className: Number(record.tienHungThinh) === 0 ? 'slscpad-zero-cell' : '' }),
+      render: v => formatNumber(v),
     },
     {
       title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 220,
@@ -1247,7 +1300,6 @@ function SlScPad() {
           loading={loading}
           size="small"
           bordered
-          rowClassName={record => (Number(record.tienHang) === 0 && !selectedRowKeys.includes(record._id) ? 'slscpad-zero-row' : '')}
           scroll={{ x: 1320 }}
           rowSelection={{
             selectedRowKeys,
@@ -1270,7 +1322,10 @@ function SlScPad() {
         title={<Space><FileExcelOutlined style={{ color: '#fa8c16' }} /><span>Xem trước: {previewFileName}</span></Space>}
         open={previewOpen}
         onCancel={closePreview}
-        width={1240}
+        width="100vw"
+        className="slscpad-preview-modal"
+        style={{ top: 0, maxWidth: '100vw', margin: 0, paddingBottom: 0 }}
+        styles={{ body: { height: 'calc(100vh - 130px)', overflowY: 'auto' } }}
         destroyOnHidden
         footer={[
           <Button key="cancel" onClick={closePreview}>Hủy</Button>,
@@ -1291,8 +1346,17 @@ function SlScPad() {
           showIcon
           icon={<EditOutlined />}
           className="mb-3"
-          message="Có thể sửa trực tiếp CONT, LINE, SZTP, NGÀY SC, số tiền và REMARK. Dòng đã có trong báo cáo hiện màu cam; dòng đã nằm trong kỳ sản lượng trước hiện màu tím — chọn Tạo mới, Cập nhật kỳ cũ hoặc Bỏ qua."
+          message="Có thể sửa trực tiếp CONT, LINE, SZTP, NGÀY SC, số tiền và REMARK. Nếu tiền trong file khác tiền cũ, ngay dưới ô tiền sẽ hiện giá trị cũ kèm nút Cập nhật/Giữ cũ. Dòng đã có trong báo cáo hiện màu cam; dòng đã nằm trong kỳ sản lượng trước hiện màu tím — chọn Tạo mới, Cập nhật kỳ cũ hoặc Bỏ qua."
         />
+        {previewNoMoney && (
+          <Alert
+            type="warning"
+            showIcon
+            className="mb-3"
+            message="File không có 2 cột tiền (TIỀN HÃNG TÀU - PAD / TIỀN HƯNG THỊNH - PAD)"
+            description="Hai cột tiền sẽ giữ nguyên giá trị hiện có; dòng mới sẽ lưu với giá trị 0. File cập nhật có 2 cột tiền sẽ tự động bật lại ô nhập và hiện nút cập nhật ở từng cột tiền."
+          />
+        )}
         <Space wrap className="mb-3">
           <Tag>File: {previewStats.total}</Tag>
           <Tag color="green">Mới: {previewStats.fresh}</Tag>
@@ -1307,17 +1371,16 @@ function SlScPad() {
           dataSource={previewRows}
           size="small"
           bordered
-          rowClassName={record => (Number(record.tienHang) === 0 && !previewSelectedKeys.includes(record._key) ? 'slscpad-zero-row' : '')}
-          scroll={{ x: 1500, y: 420 }}
+          scroll={{ x: 1500, y: 'max(240px, calc(100vh - 430px))' }}
           rowSelection={{
             selectedRowKeys: previewSelectedKeys,
             onChange: setPreviewSelectedKeys,
           }}
           pagination={{
-            pageSize: 10,
+            pageSize: 20,
             showSizeChanger: true,
             showTotal: t => `Tổng ${t} dòng`,
-            pageSizeOptions: [10, 20, 50, 100],
+            pageSizeOptions: [20, 50, 100, 500],
           }}
         />
       </Modal>

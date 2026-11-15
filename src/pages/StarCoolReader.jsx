@@ -9,7 +9,7 @@ import {
   UploadOutlined, DownloadOutlined, ContainerOutlined, ReadOutlined,
   FileSearchOutlined, ReloadOutlined, ExperimentOutlined,
 } from '@ant-design/icons'
-import sampleUrl from '../file/SSZLU501.449?url'
+import sampleUrl from '../file/DOC FILE NHIET DO HT/SSZLU501.449?url'
 
 const { Dragger } = Upload
 const { Text } = Typography

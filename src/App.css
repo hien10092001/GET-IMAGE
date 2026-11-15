@@ -347,3 +347,26 @@ body {
 .slscpad-zero-row:hover > td {
   background-color: #ffb8b8 !important;
 }
+
+/* SL SC PAD: chỉ tô đỏ ô tiền có giá trị = 0 */
+.slscpad-zero-cell {
+  background-color: #ffd6d6 !important;
+}
+
+.ant-table-tbody > tr > td.slscpad-zero-cell:hover {
+  background-color: #ffb8b8 !important;
+}
+
+/* SL SC PAD: modal xem trước toàn màn hình */
+.slscpad-preview-modal .ant-modal-content {
+  height: 100vh;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 20px;
+}
+
+.slscpad-preview-modal .ant-modal-body {
+  flex: 1;
+  min-height: 0;
+}
