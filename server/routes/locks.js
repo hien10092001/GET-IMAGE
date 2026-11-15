@@ -4,7 +4,7 @@ import Container from '../models/Container.js'
 import Depot from '../models/Depot.js'
 import ShippingList from '../models/ShippingList.js'
 import Classification from '../models/Classification.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 
 function appendDate(current, newDate) {
@@ -60,6 +60,8 @@ async function updateShippingListFromLock(items, lockDate) {
 }
 
 const router = Router()
+
+router.use(authMiddleware, roleMiddleware('Admin'))
 
 // GET /api/locks — list all locks, with optional filters
 router.get('/', authMiddleware, async (req, res) => {

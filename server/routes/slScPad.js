@@ -1,9 +1,11 @@
 import { Router } from 'express'
 import SlScPad from '../models/SlScPad.js'
 import SlScPadHistory from '../models/SlScPadHistory.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, usernameMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+router.use(authMiddleware, usernameMiddleware('baogia'))
 
 const parseNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0

@@ -1,8 +1,10 @@
-import { useState, useRef, lazy, Suspense } from 'react'
+import { useState, useRef, lazy, Suspense, useEffect } from 'react'
 const XLSX = window.XLSX
 import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Upload, Checkbox, Radio, InputNumber, Slider, Space, Typography, Row, Col, Divider, message, Select, Input } from 'antd'
 import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined, CloseOutlined, DollarOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
+import Login from './pages/Login'
+import { scopeForTab, loadSessions, activateSession, clearSession, requiredUsername, scopeLabel } from './services/sectionAuth'
 import './App.css'
 
 const EstTranslator = lazy(() => import('./pages/EstTranslator'))
@@ -45,18 +47,11 @@ function App() {
   const [collapsed, setCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState('excel')
   const [openKeys, setOpenKeys] = useState(['containers-group'])
-  const [user, setUser] = useState(() => {
-    try {
-      const stored = localStorage.getItem('user')
-      if (stored) {
-        const u = JSON.parse(stored)
-        if (u && u.username) return u
-      }
-    } catch {
-      localStorage.removeItem('user')
-    }
-    return null
-  })
+  const [sessions, setSessions] = useState(() => loadSessions())
+  const activeScope = scopeForTab(activeTab)
+  const user = activeScope ? sessions[activeScope] : null
+  const expectedUsername = requiredUsername(activeScope)
+  const needsLogin = Boolean(activeScope) && (!user || user.username !== expectedUsername)
 
   const tabColors = {
     excel: '#1a73e8',
@@ -72,16 +67,37 @@ function App() {
     depots: '#722ed1',
   }
 
-  const handleLogin = (userData) => setUser(userData)
+  const containerGroupKey = 'containers-group'
+
+  const handleLogin = (userData) => {
+    if (!activeScope) return
+    setSessions(prev => ({ ...prev, [activeScope]: userData }))
+  }
 
   const handleLogout = () => {
+    if (activeScope) clearSession(activeScope)
     localStorage.removeItem('token')
     localStorage.removeItem('user')
-    setUser(null)
+    localStorage.removeItem('activeScope')
+    if (activeScope) setSessions(prev => ({ ...prev, [activeScope]: null }))
     setActiveTab('excel')
   }
 
-  const containerGroupKey = 'containers-group'
+  const switchTab = (key) => {
+    if (key === containerGroupKey) return
+    activateSession(scopeForTab(key))
+    setActiveTab(key)
+    setOpenKeys([])
+  }
+
+  useEffect(() => {
+    const handleAuthExpired = () => {
+      if (!activeScope) return
+      setSessions(prev => ({ ...prev, [activeScope]: null }))
+    }
+    window.addEventListener('auth:expired', handleAuthExpired)
+    return () => window.removeEventListener('auth:expired', handleAuthExpired)
+  }, [activeScope])
 
   const tabItems = [
     { key: 'excel', icon: <FileExcelOutlined style={{ color: tabColors.excel }} />, label: <span style={{ color: activeTab === 'excel' ? tabColors.excel : undefined }}>Excel File Matcher</span> },
@@ -133,6 +149,16 @@ function App() {
         },
       }}
     >
+      {needsLogin ? (
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
+          <Login
+            onLogin={handleLogin}
+            scope={activeScope}
+            expectedUsername={expectedUsername}
+            sectionLabel={scopeLabel(activeScope)}
+          />
+        </div>
+      ) : (
       <Layout className="min-h-screen">
         <Sider
           collapsible
@@ -161,10 +187,7 @@ function App() {
             openKeys={openKeys}
             onOpenChange={setOpenKeys}
             onClick={({ key }) => {
-              if (key !== containerGroupKey) {
-                setActiveTab(key)
-                setOpenKeys([])
-              }
+              switchTab(key)
             }}
             items={sidebarItems}
             className="border-0"
@@ -178,7 +201,7 @@ function App() {
                 <Tag icon={<UserOutlined />} color="blue">{user.username} ({user.role})</Tag>
               )
             ) : (
-              <Button type="primary" size="small" onClick={() => setActiveTab('containers')} className="w-full">
+              <Button type="primary" size="small" onClick={() => switchTab('containers')} className="w-full">
                 {collapsed ? <UserOutlined /> : 'Đăng nhập'}
               </Button>
             )}
@@ -207,6 +230,7 @@ function App() {
           </Content>
         </Layout>
       </Layout>
+      )}
     </ConfigProvider>
   )
 }

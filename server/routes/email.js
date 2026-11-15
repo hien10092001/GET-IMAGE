@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import nodemailer from 'nodemailer'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+router.use(authMiddleware, roleMiddleware('Admin'))
 
 const splitEmails = (value) =>
   String(value || '')

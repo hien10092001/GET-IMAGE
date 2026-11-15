@@ -37,3 +37,12 @@ export function roleMiddleware(...roles) {
     next()
   }
 }
+
+export function usernameMiddleware(...usernames) {
+  return (req, res, next) => {
+    if (!usernames.includes(req.user.username)) {
+      return res.status(403).json({ message: 'Tài khoản không có quyền truy cập mục này' })
+    }
+    next()
+  }
+}

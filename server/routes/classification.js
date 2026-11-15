@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import Classification from '../models/Classification.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+router.use(authMiddleware, roleMiddleware('Admin'))
 
 router.get('/', async (_req, res) => {
   try {

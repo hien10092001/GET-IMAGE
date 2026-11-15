@@ -2,9 +2,11 @@ import { Router } from 'express'
 import ShippingList from '../models/ShippingList.js'
 import ProductionLock from '../models/ProductionLock.js'
 import Classification from '../models/Classification.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+router.use(authMiddleware, roleMiddleware('Admin'))
 
 function appendDate(current, newDate) {
   if (!current) return newDate

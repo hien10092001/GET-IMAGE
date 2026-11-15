@@ -1,8 +1,10 @@
 import { Router } from 'express'
 import SanLuongHT from '../models/SanLuongHT.js'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
+
+router.use(authMiddleware, roleMiddleware('Admin'))
 
 const normalizeItem = (item) => ({
   containerNo: String(item.containerNo || '').trim().toUpperCase(),

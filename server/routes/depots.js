@@ -5,6 +5,8 @@ import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
+router.use(authMiddleware, roleMiddleware('Admin'))
+
 const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 const toDateKey = (value) => {
