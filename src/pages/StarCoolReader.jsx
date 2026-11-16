@@ -172,24 +172,6 @@ function readI16(bytes, o) {
   return v >= 0x8000 ? v - 0x10000 : v
 }
 
-const RUNNING_HOUR_LABELS = [
-  'Unit', 'Compressor', 'Evaporator fans', 'Condenser fan', 'Evaporator heater',
-]
-
-function decodeRunningHours(events) {
-  let best = null
-  for (const r of events) {
-    if (r.id !== 0x82) continue
-    if (r.payload.length < 12) continue
-    if (r.payload[0] !== 0x14 || r.payload[1] !== 0x00) continue
-    best = r
-  }
-  if (!best) return null
-  const values = []
-  for (let i = 0; i < RUNNING_HOUR_LABELS.length; i++) values.push(readI16(best.payload, 2 + i * 2))
-  return { record: best, values }
-}
-
 // Hệ số nhiệt độ đã đối chiếu với file export StarView (SSZLU501449.csv):
 //   Tret = int16(0x04 payload @1) / 400  -> khớp 100% trong ±0.1 °C
 //   Tsup = int16(0x06 payload @1) / 400  -> khớp ~90% trong ±0.1 °C (sai số TB 0.03 °C)
@@ -213,7 +195,7 @@ function decodeTsuc(payload) {
 }
 
 // AirEx (thông gió không khí ngoài, m3/h) lưu ở byte 0x04 payload[11] dạng mã vị trí.
-const AIR_EX_BY_BYTE = { 0: 0, 1: 0, 5: 10, 7: 15, 9: 15 }
+const AIR_EX_BY_BYTE = { 0: 0, 1: 0, 5: 10, 7: 15, 9: 15, 20: 20, 25: 25 }
 
 function decodeAirEx(payload) {
   if (!payload || payload.length < 12) return null
@@ -221,12 +203,15 @@ function decodeAirEx(payload) {
   return Object.prototype.hasOwnProperty.call(AIR_EX_BY_BYTE, v) ? AIR_EX_BY_BYTE[v] : null
 }
 
+const TSET_BY_BYTE = { 6: -25, 30: 3, 56: -20, 65: 6.5, 76: -18, 100: 10, 230: 23, 246: -1, 250: 25 }
+
 // Setpoint lưu ở byte 0x04 payload[9] dưới dạng low-byte của (Tset × 10).
 // Giá trị thực là một trong hai ứng viên L/10 hoặc (L-256)/10; chọn ứng viên
 // gần nhiệt độ khí về (Tret) nhất vì bộ điều khiển luôn kéo Tret về setpoint.
 function decodeSetpoint(g04, tret) {
   if (!g04 || g04.length < 10) return null
   const L = g04[9]
+  if (Object.prototype.hasOwnProperty.call(TSET_BY_BYTE, L)) return TSET_BY_BYTE[L]
   const pos = L / 10
   const neg = (L - 256) / 10
   let value = pos
@@ -243,34 +228,6 @@ function decodeTemps(g) {
   const tsuc = decodeTsuc(g.channels[0x06])
   const airEx = decodeAirEx(g.channels[0x04])
   return { tsup, tret, tset, tsuc, airEx }
-}
-
-function buildSetpointSegments(groups) {
-  const segments = []
-  for (const g of groups) {
-    const { tset } = decodeTemps(g)
-    if (tset === null) continue
-    const last = segments[segments.length - 1]
-    if (last && last.value === tset) {
-      last.count += 1
-      last.lastCounter = g.counter
-    } else {
-      segments.push({ value: tset, firstCounter: g.counter, lastCounter: g.counter, count: 1 })
-    }
-  }
-  return segments
-}
-
-function setpointSummary(groups) {
-  const counts = {}
-  for (const g of groups) {
-    const { tset } = decodeTemps(g)
-    if (tset === null) continue
-    counts[tset] = (counts[tset] || 0) + 1
-  }
-  return Object.entries(counts)
-    .map(([value, count]) => ({ value: Number(value), count }))
-    .sort((a, b) => b.count - a.count)
 }
 
 function temperatureSummary(groups) {
@@ -1003,38 +960,6 @@ function StarCoolReader() {
     wsRaw['!cols'] = [{ wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 46 }, { wch: 18 }]
     XLSX.utils.book_append_sheet(wb, wsRaw, 'Ban ghi tho')
 
-    const rh = decodeRunningHours(data.events)
-    const spSegments = buildSetpointSegments(data.groups)
-    const spSummary = setpointSummary(data.groups)
-    const temps = temperatureSummary(data.groups)
-    const decodedAoa = [['Hạng mục', 'Giá trị']]
-    if (rh) rh.values.forEach((v, i) => decodedAoa.push([RUNNING_HOUR_LABELS[i] + ' (h)', v]))
-    decodedAoa.push([])
-    const rangeText = (s) => (s ? `min ${s.min.toFixed(2)} / trung vị ${s.median.toFixed(2)} / max ${s.max.toFixed(2)} °C` : '—')
-    decodedAoa.push(['Nhiệt độ khí cấp (Tsup)', rangeText(temps.tsup)])
-    decodedAoa.push(['Nhiệt độ khí về (Tret)', rangeText(temps.tret)])
-    decodedAoa.push(['Nhiệt độ hơi hút (Tsuc)', rangeText(temps.tsuc)])
-    decodedAoa.push(['Thông gió AirEx hiện tại (m3/h)', temps.last?.airEx === null || temps.last?.airEx === undefined ? '—' : String(temps.last.airEx)])
-    decodedAoa.push([])
-    decodedAoa.push(['Setpoint (°C)', 'Số lần'])
-    for (const c of spSummary) decodedAoa.push([c.value.toFixed(1), c.count])
-    decodedAoa.push([])
-    decodedAoa.push(['Setpoint theo thời gian', '', '', ''])
-    decodedAoa.push(['Setpoint (°C)', 'Từ (ước lượng)', 'Đến (ước lượng)', 'Số mốc'])
-    for (const s of spSegments) {
-      decodedAoa.push([
-        s.value.toFixed(1),
-        timeFor(s.firstCounter),
-        timeFor(s.lastCounter),
-        s.count,
-      ])
-    }
-    decodedAoa.push([])
-    decodedAoa.push(['Ghi chú', 'Tsup/Tret/Tset/Tsuc/AirEx đã giải mã và đối chiếu với file export StarView. Tevap/Tamb/RH/Pdis không lưu dạng trường tuyến tính trong bản ghi định kỳ (StarView tự tính/không log). USDA/cargo không có trong file này.'])
-    const wsDecoded = XLSX.utils.aoa_to_sheet(decodedAoa)
-    wsDecoded['!cols'] = [{ wch: 32 }, { wch: 22 }, { wch: 22 }, { wch: 10 }]
-    XLSX.utils.book_append_sheet(wb, wsDecoded, 'Gia tri giai ma')
-
     const base = (data.fileName || 'starcool').replace(/\.[^.]+$/, '')
     XLSX.writeFile(wb, `${base}_starcool.xlsx`)
     message.success('Đã xuất Excel')
@@ -1043,9 +968,6 @@ function StarCoolReader() {
   const isV2b = data?.format === 'v2b'
   const legacyData = data && !isV2b
   const sensorIds = legacyData ? [...data.mainIds].sort((a, b) => a - b) : []
-  const runningHours = legacyData ? decodeRunningHours(data.events) : null
-  const setpointSegments = legacyData ? buildSetpointSegments(data.groups) : []
-  const setpointStats = legacyData ? setpointSummary(data.groups) : []
   const temps = legacyData ? temperatureSummary(data.groups) : null
   const currentSetpoint = temps?.last?.tset ?? null
   const currentTsup = temps?.last?.tsup ?? null
@@ -1315,119 +1237,6 @@ function StarCoolReader() {
                       showTotal: (t, r) => `${r[0]}-${r[1]} / ${t}`,
                     }}
                   />
-                ),
-              },
-              {
-                key: 'decoded',
-                label: <Space><ExperimentOutlined />Giá trị giải mã</Space>,
-                children: (
-                  <Space orientation="vertical" size="middle" className="w-full">
-                    <Alert
-                      type="success"
-                      showIcon
-                      title="Đã giải mã nhiệt độ thực (đối chiếu file export StarView)"
-                      description={
-                        <Text className="text-xs">
-                          Tsup (khí cấp) = int16 LE kênh 0x06 byte 1 ÷ 400. Tret (khí về) = int16 kênh 0x04 byte 1 ÷ 400 (khớp 100% ±0.1 °C). Tsuc (hơi hút) = int16 kênh 0x06 byte 4 ÷ 400 (~84% ±0.5 °C). Tset = byte 0x04 offset 9 × 0.1 °C, chọn dấu theo Tret. AirEx (thông gió) = tra byte 0x04 offset 11. Running hours đọc từ bản ghi 0x82 subtype 0x14. Tevap/Tamb/RH/Pdis không lưu dạng trường tuyến tính trong bản ghi định kỳ.
-                        </Text>
-                      }
-                    />
-                    <Card size="small" title={<Text strong>Running hours (giải mã)</Text>}>
-                      {runningHours ? (
-                        <Descriptions
-                          bordered
-                          size="small"
-                          column={{ xs: 1, sm: 1, md: 2, lg: 3 }}
-                          items={runningHours.values.map((v, i) => ({
-                            key: i,
-                            label: <Text className="text-xs">{RUNNING_HOUR_LABELS[i]}</Text>,
-                            children: <Text className="text-xs">{v} h</Text>,
-                          }))}
-                        />
-                      ) : (
-                        <Text type="secondary" className="text-xs">Không tìm thấy bản ghi running hours (0x82/0x14).</Text>
-                      )}
-                    </Card>
-                    <Card size="small" title={<Text strong>Nhiệt độ khí cấp / khí về (Tsup / Tret) — đã giải mã</Text>}>
-                      {temps?.tsup && temps?.tret ? (
-                        <>
-                          <Row gutter={[16, 8]}>
-                            <Col xs={12} md={6}><Statistic title="Tsup nhỏ nhất" value={temps.tsup.min.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tsup trung bình" value={temps.tsup.avg.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tret nhỏ nhất" value={temps.tret.min.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tret trung bình" value={temps.tret.avg.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tsup trung vị" value={temps.tsup.median.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tsup lớn nhất" value={temps.tsup.max.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tret trung vị" value={temps.tret.median.toFixed(2)} suffix="°C" /></Col>
-                            <Col xs={12} md={6}><Statistic title="Tret lớn nhất" value={temps.tret.max.toFixed(2)} suffix="°C" /></Col>
-                            {temps.tsuc && (
-                              <>
-                                <Col xs={12} md={6}><Statistic title="Tsuc nhỏ nhất" value={temps.tsuc.min.toFixed(2)} suffix="°C" /></Col>
-                                <Col xs={12} md={6}><Statistic title="Tsuc trung bình" value={temps.tsuc.avg.toFixed(2)} suffix="°C" /></Col>
-                                <Col xs={12} md={6}><Statistic title="Tsuc trung vị" value={temps.tsuc.median.toFixed(2)} suffix="°C" /></Col>
-                                <Col xs={12} md={6}><Statistic title="Tsuc lớn nhất" value={temps.tsuc.max.toFixed(2)} suffix="°C" /></Col>
-                              </>
-                            )}
-                          </Row>
-                          <Text type="secondary" className="text-xs">
-                            Tsup = khí cấp (sau dàn lạnh), Tret = khí về (trước dàn lạnh), Tsuc = hơi hút. Đây là nhiệt độ đo thực, đã đối chiếu với file export StarView (Tret khớp 100% ±0.1 °C, Tsuc ~84% ±0.5 °C).
-                          </Text>
-                        </>
-                      ) : (
-                        <Text type="secondary" className="text-xs">Không có dữ liệu.</Text>
-                      )}
-                    </Card>
-                    <Card size="small" title={<Text strong>Nhiệt độ đặt (Tset) — byte 0x04[9] × 0.1 °C, chọn dấu theo Tret</Text>}>
-                      {setpointStats.length ? (
-                        <>
-                          <Space wrap size={[8, 8]} className="mb-3">
-                            {setpointStats.map(c => (
-                              <Tag key={c.value} color={c.value === currentSetpoint ? 'volcano' : 'default'}>
-                                {c.value.toFixed(1)} °C · {c.count.toLocaleString('vi-VN')} mốc
-                              </Tag>
-                            ))}
-                          </Space>
-                          <Table
-                            size="small"
-                            rowKey={(s) => `${s.value}-${s.firstCounter}`}
-                            dataSource={setpointSegments}
-                            pagination={false}
-                            scroll={{ y: 320 }}
-                            columns={[
-                              {
-                                title: 'Nhiệt độ đặt',
-                                width: 130,
-                                render: (_, s) => <Tag color="volcano">{s.value.toFixed(1)} °C</Tag>,
-                              },
-                              {
-                                title: 'Từ (ước lượng)',
-                                width: 180,
-                                render: (_, s) => <Text className="text-xs">{timeFor(s.firstCounter) || '—'}</Text>,
-                              },
-                              {
-                                title: 'Đến (ước lượng)',
-                                width: 180,
-                                render: (_, s) => <Text className="text-xs">{timeFor(s.lastCounter) || '—'}</Text>,
-                              },
-                              {
-                                title: 'Số mốc',
-                                width: 90,
-                                align: 'right',
-                                render: (_, s) => s.count.toLocaleString('vi-VN'),
-                              },
-                            ]}
-                          />
-                        </>
-                      ) : (
-                        <Text type="secondary" className="text-xs">Không có dữ liệu.</Text>
-                      )}
-                    </Card>
-                    <Card size="small" title={<Text strong>Ghi chú giải mã</Text>}>
-                      <Text type="secondary" className="text-xs">
-                        Tset lấy từ byte 0x04 offset 9 (low-byte của Tset×10). Byte cao bị trường khác chiếm nên dấu được chọn theo Tret (bộ điều khiển kéo Tret về setpoint). USDA/cargo không có trong bản ghi định kỳ của file này nên không giải mã được. Các cột kênh còn lại hiển thị hex thô.
-                      </Text>
-                    </Card>
-                  </Space>
                 ),
               },
             ]}
