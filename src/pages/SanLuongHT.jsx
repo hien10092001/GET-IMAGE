@@ -202,18 +202,18 @@ const parseRows = (aoa) => {
 }
 
 const tableColumns = (onEdit, onDelete) => [
-  { title: 'STT', key: 'stt', width: 50, fixed: 'left', render: (_, __, i) => i + 1 },
-  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 160, fixed: 'left' },
+  { title: 'STT', key: 'stt', width: 55, fixed: 'left', render: (_, __, i) => i + 1 },
+  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 165, fixed: 'left', ellipsis: true, onCell: () => ({ style: { whiteSpace: 'nowrap' } }) },
+  { title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 80, align: 'center' },
   { title: 'N - BG', dataIndex: 'nBg', key: 'nBg', width: 110, align: 'center' },
   { title: 'N - APR', dataIndex: 'nApr', key: 'nApr', width: 110, align: 'center' },
-  { title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 90, align: 'center' },
   { title: 'N - COMPLETE', dataIndex: 'nComplete', key: 'nComplete', width: 130, align: 'center' },
-  { title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 120, align: 'center' },
-  { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 100, ellipsis: true, render: v => (v ? normalizeRemark(v) : '-') },
-  { title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 130, align: 'right', render: v => v || '-' },
-  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 650, render: renderChiTietSc },
+  { title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 115, align: 'center' },
+  { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 110, ellipsis: true, render: v => (v ? normalizeRemark(v) : '-') },
+  { title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 120, align: 'right', render: v => v || '-' },
+  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 560, render: renderChiTietSc },
   {
-    title: 'Hành động', key: 'action', width: 100, fixed: 'right',
+    title: 'Hành động', key: 'action', width: 90, fixed: 'right',
     render: (_, record) => (
       <Space size={0}>
         <Tooltip title="Sửa">
@@ -1036,7 +1036,7 @@ function SanLuongHT() {
       loading={loading}
       size="small"
       bordered
-      scroll={{ x: 1540 }}
+      scroll={{ x: 1680 }}
       rowSelection={{
         selectedRowKeys,
         onChange: setSelectedRowKeys,
