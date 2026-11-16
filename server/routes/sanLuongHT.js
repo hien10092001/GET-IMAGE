@@ -14,6 +14,7 @@ const normalizeItem = (item) => ({
   nComplete: String(item.nComplete || '').trim(),
   nSc: String(item.nSc || '').trim(),
   remark: String(item.remark || '').trim(),
+  tienApr: String(item.tienApr || '').trim(),
   chiTietSc: String(item.chiTietSc || '').trim(),
 })
 

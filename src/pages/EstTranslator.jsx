@@ -11,6 +11,7 @@ import {
   FormatPainterOutlined, ReloadOutlined, ExportOutlined,
   SearchOutlined, SettingOutlined,
 } from '@ant-design/icons'
+import { copyTable } from '../services/clipboard'
 
 const { Dragger } = Upload
 const { Text, Title } = Typography
@@ -508,10 +509,13 @@ function EstTranslator() {
     return false
   }
 
-  const copyAll = () => {
-    const text = exportFiltered.map(r => `${r.container}\t${rowLine(r)}`).join('\n')
-    navigator.clipboard.writeText(text)
-    message.success(`Đã copy ${exportFiltered.length} dòng!`)
+  const copyAll = async () => {
+    try {
+      await copyTable(exportFiltered.map(r => [r.container, rowLine(r)]))
+      message.success(`Đã copy ${exportFiltered.length} dòng!`)
+    } catch {
+      message.error('Lỗi copy')
+    }
   }
 
   const refreshAll = () => {

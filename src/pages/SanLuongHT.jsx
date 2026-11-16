@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { Table, Button, Input, Space, Tag, Modal, Form, Row, Col, Card, Upload, Popconfirm, message, Tooltip, Alert, DatePicker, Select, Tabs, Switch, Checkbox } from 'antd'
 import {
   PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined,
@@ -8,6 +8,7 @@ import {
 import dayjs from 'dayjs'
 import api from '../services/api'
 import { aggregateEstResults, convertEstFile, loadEstSettings } from '../services/estConvert'
+import { copyTable } from '../services/clipboard'
 
 const XLSX = window.XLSX
 
@@ -128,6 +129,10 @@ const normalizeRemark = (value) => {
 
 const REMARK_SELECT_OPTIONS = REMARK_OPTIONS.map(v => ({ value: v, label: v }))
 
+const exportRowValues = (r) => EXPORT_COLUMNS.map(c => (
+  c.key === 'remark' ? normalizeRemark(r.remark) : (r[c.key] ?? '')
+))
+
 const isContHeader = (v) => {
   const h = normalizeHeader(v)
   if (!h) return false
@@ -196,37 +201,17 @@ const parseRows = (aoa) => {
     }))
 }
 
-const EditableTienCell = ({ value, record, onSave }) => {
-  const commit = (e) => {
-    const next = String(e.target.value ?? '').trim()
-    if (next !== String(value ?? '').trim()) onSave(record, next)
-  }
-  return (
-    <Input
-      size="small"
-      defaultValue={value ?? ''}
-      onBlur={commit}
-      onPressEnter={e => { e.currentTarget.blur() }}
-      placeholder="Nhập..."
-      style={{ width: '100%', textAlign: 'right' }}
-    />
-  )
-}
-
-const tableColumns = (onEdit, onDelete, onSaveTienApr) => [
-  { title: 'STT', key: 'stt', width: 60, fixed: 'left', render: (_, __, i) => i + 1 },
-  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 160, fixed: 'left' },
+const tableColumns = (onEdit, onDelete) => [
+  { title: 'STT', key: 'stt', width: 50, fixed: 'left', render: (_, __, i) => i + 1 },
+  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 100, fixed: 'left' },
   { title: 'N - BG', dataIndex: 'nBg', key: 'nBg', width: 110, align: 'center' },
   { title: 'N - APR', dataIndex: 'nApr', key: 'nApr', width: 110, align: 'center' },
   { title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 90, align: 'center' },
   { title: 'N - COMPLETE', dataIndex: 'nComplete', key: 'nComplete', width: 130, align: 'center' },
   { title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 120, align: 'center' },
   { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 100, ellipsis: true, render: v => (v ? normalizeRemark(v) : '-') },
-  {
-    title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 130, align: 'right',
-    render: (v, record) => <EditableTienCell key={`${record._id}-${v ?? ''}`} value={v} record={record} onSave={onSaveTienApr} />,
-  },
-  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 600, render: renderChiTietSc },
+  { title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 130, align: 'right', render: v => v || '-' },
+  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 800, render: renderChiTietSc },
   {
     title: 'Hành động', key: 'action', width: 100, fixed: 'right',
     render: (_, record) => (
@@ -901,16 +886,6 @@ function SanLuongHT() {
     }
   }
 
-  const handleSaveTienApr = async (record, value) => {
-    try {
-      const res = await api.put(`/sanluong-ht/${record._id}`, { ...record, tienApr: value })
-      setItems(prev => prev.map(i => (i._id === record._id ? res.data : i)))
-      message.success('Đã cập nhật TIEN - APR')
-    } catch (e) {
-      message.error(e.response?.data?.message || 'Lỗi cập nhật TIEN - APR')
-    }
-  }
-
   const handleDelete = async (id) => {
     try {
       await api.delete(`/sanluong-ht/${id}`)
@@ -1018,21 +993,10 @@ function SanLuongHT() {
 
   const copySelected = async () => {
     if (!selectedItems.length) return
-    const header = ['STT', ...EXPORT_COLUMNS.map(c => c.title)].join('\t')
-    const lines = selectedItems.map((r, i) => [
-      i + 1,
-      r.containerNo || '',
-      r.nBg || '',
-      r.nApr || '',
-      r.sztp || '',
-      r.nComplete || '',
-      r.nSc || '',
-      normalizeRemark(r.remark),
-      r.tienApr || '',
-      r.chiTietSc || '',
-    ].join('\t'))
+    const header = ['STT', ...EXPORT_COLUMNS.map(c => c.title)]
+    const rows = selectedItems.map((r, i) => [i + 1, ...exportRowValues(r)])
     try {
-      await navigator.clipboard.writeText([header, ...lines].join('\n'))
+      await copyTable(rows, header)
       message.success(`Đã copy ${selectedItems.length} dòng`)
     } catch {
       message.error('Lỗi copy')
@@ -1040,25 +1004,13 @@ function SanLuongHT() {
   }
 
   const exportExcel = () => {
-    const rows = selectedItems.length > 0 ? selectedItems : items
+    const rows = selectedItems.length > 0 ? selectedItems : visibleItems
     if (!rows.length) {
       message.warning('Chưa có dữ liệu để xuất')
       return
     }
     const header = ['STT', ...EXPORT_COLUMNS.map(c => c.file), '']
-    const body = rows.map((i, idx) => [
-      idx + 1,
-      i.containerNo || '',
-      i.nBg || '',
-      i.nApr || '',
-      i.sztp || '',
-      i.nComplete || '',
-      i.nSc || '',
-      normalizeRemark(i.remark),
-      i.tienApr || '',
-      i.chiTietSc || '',
-      '',
-    ])
+    const body = rows.map((i, idx) => [idx + 1, ...exportRowValues(i), ''])
     const aoa = [
       ['BÁO CÁO WHL 2026', '', '', '', '', '', '', '', '', '', ''],
       header,
@@ -1079,7 +1031,7 @@ function SanLuongHT() {
   const renderTable = (data, emptyText) => (
     <Table
       rowKey="_id"
-      columns={tableColumns(openEdit, handleDelete, handleSaveTienApr)}
+      columns={tableColumns(openEdit, handleDelete)}
       dataSource={data}
       loading={loading}
       size="small"
