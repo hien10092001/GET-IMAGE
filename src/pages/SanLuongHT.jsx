@@ -211,7 +211,7 @@ const tableColumns = (onEdit, onDelete) => [
   { title: 'N - SC', dataIndex: 'nSc', key: 'nSc', width: 120, align: 'center' },
   { title: 'REMARK', dataIndex: 'remark', key: 'remark', width: 100, ellipsis: true, render: v => (v ? normalizeRemark(v) : '-') },
   { title: 'TIEN - APR', dataIndex: 'tienApr', key: 'tienApr', width: 130, align: 'right', render: v => v || '-' },
-  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 800, render: renderChiTietSc },
+  { title: 'CHI TIẾT SC', dataIndex: 'chiTietSc', key: 'chiTietSc', width: 650, render: renderChiTietSc },
   {
     title: 'Hành động', key: 'action', width: 100, fixed: 'right',
     render: (_, record) => (
