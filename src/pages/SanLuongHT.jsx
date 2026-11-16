@@ -203,7 +203,7 @@ const parseRows = (aoa) => {
 
 const tableColumns = (onEdit, onDelete) => [
   { title: 'STT', key: 'stt', width: 50, fixed: 'left', render: (_, __, i) => i + 1 },
-  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 100, fixed: 'left' },
+  { title: 'CONT', dataIndex: 'containerNo', key: 'containerNo', width: 160, fixed: 'left' },
   { title: 'N - BG', dataIndex: 'nBg', key: 'nBg', width: 110, align: 'center' },
   { title: 'N - APR', dataIndex: 'nApr', key: 'nApr', width: 110, align: 'center' },
   { title: 'SZTP', dataIndex: 'sztp', key: 'sztp', width: 90, align: 'center' },

@@ -104,23 +104,48 @@ const updateHistoryItem = async (historyId, item) => {
 
 router.get('/produced', authMiddleware, async (req, res) => {
   try {
+    const map = new Map()
+    const histories = await SlScPadHistory.find()
+      .sort({ createdAt: 1 })
+      .select('period items')
+      .lean()
+    for (const history of histories) {
+      for (const it of (history.items || [])) {
+        if (!it.containerNo) continue
+        const key = `${it.line || ''}|${it.containerNo || ''}`
+        map.set(key, {
+          key,
+          line: it.line || '',
+          containerNo: it.containerNo || '',
+          outputId: history._id,
+          period: history.period || '',
+          tienHang: round2(it.tienHang),
+          tienHungThinh: round2(it.tienHungThinh),
+        })
+      }
+    }
     const docs = await SlScPad.find({ outputId: { $ne: null } })
       .select('line containerNo outputId tienHang tienHungThinh')
       .lean()
     const ids = [...new Set(docs.map(d => String(d.outputId)))]
-    const histories = await SlScPadHistory.find({ _id: { $in: ids } })
-      .select('period')
-      .lean()
-    const periodMap = new Map(histories.map(h => [String(h._id), h.period || '']))
-    res.json(docs.map(d => ({
-      key: `${d.line || ''}|${d.containerNo || ''}`,
-      line: d.line || '',
-      containerNo: d.containerNo || '',
-      outputId: d.outputId,
-      period: periodMap.get(String(d.outputId)) || '',
-      tienHang: round2(d.tienHang),
-      tienHungThinh: round2(d.tienHungThinh),
-    })))
+    const periodMap = new Map(
+      (await SlScPadHistory.find({ _id: { $in: ids } }).select('period').lean())
+        .map(h => [String(h._id), h.period || ''])
+    )
+    for (const d of docs) {
+      const key = `${d.line || ''}|${d.containerNo || ''}`
+      if (map.has(key)) continue
+      map.set(key, {
+        key,
+        line: d.line || '',
+        containerNo: d.containerNo || '',
+        outputId: d.outputId,
+        period: periodMap.get(String(d.outputId)) || '',
+        tienHang: round2(d.tienHang),
+        tienHungThinh: round2(d.tienHungThinh),
+      })
+    }
+    res.json([...map.values()])
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -284,6 +309,21 @@ router.post('/import', authMiddleware, async (req, res) => {
       existingDocs.map(doc => [`${doc.line || ''}|${doc.containerNo || ''}`, doc])
     )
 
+    const histories = await SlScPadHistory.find()
+      .sort({ createdAt: 1 })
+      .select('period items')
+      .lean()
+    const historyMap = new Map()
+    for (const history of histories) {
+      for (const it of (history.items || [])) {
+        if (!it.containerNo) continue
+        historyMap.set(`${it.line || ''}|${it.containerNo || ''}`, {
+          historyId: history._id,
+          item: it,
+        })
+      }
+    }
+
     const maxOrderDoc = await SlScPad.findOne().sort({ order: -1 }).select('order').lean()
     let nextOrder = (maxOrderDoc?.order || 0) + 1
 
@@ -293,6 +333,19 @@ router.post('/import', authMiddleware, async (req, res) => {
     let updated = 0
     let producedNew = 0
     let producedUpdated = 0
+
+    const insertDoc = (item, outputId) => ({
+      line: item.line,
+      containerNo: item.containerNo,
+      sztp: item.sztp,
+      ngaySc: item.ngaySc,
+      tienHang: item.tienHang,
+      tienHungThinh: item.tienHungThinh,
+      remark: item.remark || '',
+      order: nextOrder++,
+      outputId,
+      outputAt: outputId ? new Date() : null,
+    })
 
     for (const item of normalized) {
       const setFields = {
@@ -304,24 +357,35 @@ router.post('/import', authMiddleware, async (req, res) => {
       if (item.remark) setFields.remark = item.remark
       const key = `${item.line}|${item.containerNo}`
       const existing = existingMap.get(key)
+      const historyEntry = historyMap.get(key)
+
+      if (historyEntry) {
+        if (item.mode === 'update') {
+          if (existing) {
+            ops.push({ updateOne: { filter: { _id: existing._id }, update: { $set: setFields } } })
+          } else {
+            ops.push({ insertOne: { document: insertDoc(item, historyEntry.historyId) } })
+          }
+          historyUpdates.push({ historyId: historyEntry.historyId, item: { ...item, ...setFields } })
+          producedUpdated++
+        } else {
+          if (existing) {
+            ops.push({
+              updateOne: {
+                filter: { _id: existing._id },
+                update: { $set: { ...setFields, outputId: null, outputAt: null, order: nextOrder++ } },
+              },
+            })
+          } else {
+            ops.push({ insertOne: { document: insertDoc(item, null) } })
+          }
+          producedNew++
+        }
+        continue
+      }
 
       if (!existing) {
-        ops.push({
-          insertOne: {
-            document: {
-              line: item.line,
-              containerNo: item.containerNo,
-              sztp: item.sztp,
-              ngaySc: item.ngaySc,
-              tienHang: item.tienHang,
-              tienHungThinh: item.tienHungThinh,
-              remark: item.remark || '',
-              order: nextOrder++,
-              outputId: null,
-              outputAt: null,
-            },
-          },
-        })
+        ops.push({ insertOne: { document: insertDoc(item, null) } })
         inserted++
         continue
       }
