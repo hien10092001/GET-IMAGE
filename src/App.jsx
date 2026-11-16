@@ -255,6 +255,11 @@ function findCodesInName(nameUpper, codeSet, codeLengths) {
   return found
 }
 
+function pruneNestedMatches(matches) {
+  const dirPaths = matches.filter(m => m.handle.kind === 'directory').map(m => m.fullPath)
+  return matches.filter(m => !dirPaths.some(p => p !== m.fullPath && m.fullPath.startsWith(p + '/')))
+}
+
 function ExcelMatcher() {
   const [excelData, setExcelData] = useState([])
   const [sourceDir, setSourceDir] = useState(null)
@@ -324,6 +329,7 @@ function ExcelMatcher() {
 
     setStatus('Đang quét thư mục...')
     const matches = []
+    const matchKeys = new Set()
     const foundCodes = new Set()
     let lastUpdate = Date.now()
 
@@ -339,20 +345,28 @@ function ExcelMatcher() {
       const counter = { dirsScanned: 0 }
       const unfoundCodes = new Set(excelData)
       const codeLengths = [...new Set(excelData.map(code => code.length))]
-      await scanDirectory(sourceDir, '', matches, foundCodes, unfoundCodes, null, counter, onProgress, codeLengths)
+      await scanDirectory(sourceDir, '', null, matches, matchKeys, foundCodes, unfoundCodes, counter, onProgress, codeLengths)
 
+      const pruned = pruneNestedMatches(matches)
       const notFound = excelData.filter(code => !foundCodes.has(code))
       setNotFoundCodes(notFound)
-      setMatchedFiles(matches)
-      setSelectedFiles(new Set(matches.map((_, i) => i)))
-      setStatus(`Tìm thấy ${matches.length} file/folder trùng khớp trong ${counter.dirsScanned} thư mục`)
+      setMatchedFiles(pruned)
+      setSelectedFiles(new Set(pruned.map((_, i) => i)))
+      setStatus(`Tìm thấy ${pruned.length} thư mục/file trùng khớp trong ${counter.dirsScanned} thư mục`)
     } catch (err) {
       setStatus('Lỗi quét thư mục: ' + err.message)
     }
   }
 
-  const scanDirectory = async (dirHandle, path, matches, foundCodes, unfoundCodes, parentHandle, counter, onProgress, codeLengths) => {
+  const scanDirectory = async (dirHandle, path, parentOfDir, matches, matchKeys, foundCodes, unfoundCodes, counter, onProgress, codeLengths) => {
     if (unfoundCodes.size === 0) return
+    if (path && matchKeys.has(path)) return
+
+    const addMatch = (entry) => {
+      if (matchKeys.has(entry.fullPath)) return
+      matchKeys.add(entry.fullPath)
+      matches.push(entry)
+    }
 
     const entries = []
     for await (const [name, handle] of dirHandle.entries()) {
@@ -368,7 +382,13 @@ function ExcelMatcher() {
 
       if (matchedCodes.length > 0) {
         const fullPath = path ? `${path}/${name}` : name
-        matches.push({ name, handle, fullPath, parentHandle: parentHandle || dirHandle })
+        if (handle.kind === 'directory') {
+          addMatch({ name, handle, fullPath, parentHandle: dirHandle })
+        } else if (path) {
+          addMatch({ name: dirHandle.name, handle: dirHandle, fullPath: path, parentHandle: parentOfDir })
+        } else {
+          addMatch({ name, handle, fullPath, parentHandle: dirHandle })
+        }
         for (const code of matchedCodes) {
           foundCodes.add(code)
           unfoundCodes.delete(code)
@@ -381,12 +401,14 @@ function ExcelMatcher() {
     counter.dirsScanned++
     if (counter.dirsScanned % 5 === 0) onProgress(counter.dirsScanned)
 
+    if (path && matchKeys.has(path)) return
+
     const CONCURRENCY = 8
     for (let i = 0; i < subDirs.length; i += CONCURRENCY) {
       if (unfoundCodes.size === 0) break
       const batch = subDirs.slice(i, i + CONCURRENCY)
       await Promise.all(batch.map(d =>
-        scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, matches, foundCodes, unfoundCodes, dirHandle, counter, onProgress, codeLengths)
+        scanDirectory(d.handle, path ? `${path}/${d.name}` : d.name, dirHandle, matches, matchKeys, foundCodes, unfoundCodes, counter, onProgress, codeLengths)
       ))
     }
   }
@@ -566,7 +588,7 @@ function ExcelMatcher() {
         </Button>
       </Card>
 
-      <Card title={<Space><SearchOutlined /><Text strong>4. Tìm và copy file</Text></Space>}>
+      <Card title={<Space><SearchOutlined /><Text strong>4. Tìm và chuyển file</Text></Space>}>
         <Button
           type="primary"
           icon={<SearchOutlined />}
@@ -576,6 +598,9 @@ function ExcelMatcher() {
         >
           Tìm file trùng khớp
         </Button>
+        <Text type="secondary" className="block mt-2">
+          Mã khớp với file bên trong thư mục nào thì cả thư mục đó được chuyển nguyên vẹn (không tách từng ảnh).
+        </Text>
 
         {matchedFiles.length > 0 && (
           <div className="mt-4">
