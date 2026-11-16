@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import Login from '../pages/Login'
-import { scopeForTab, requiredUsername, scopeLabel } from '../services/sectionAuth'
+import { scopeForTab, requiredUsername, allowedUsernames, scopeLabel } from '../services/sectionAuth'
 
 const ContainerManagement = lazy(() => import('../pages/ContainerManagement'))
 const DepotsManagement = lazy(() => import('../pages/DepotManagement'))
@@ -11,7 +11,8 @@ const SlScPad = lazy(() => import('../pages/SlScPad'))
 function ProtectedPages({ activeTab, user, onLogin }) {
   const scope = scopeForTab(activeTab)
   const expectedUsername = requiredUsername(scope)
-  const authorized = user && (!expectedUsername || user.username === expectedUsername)
+  const allowed = allowedUsernames(scope)
+  const authorized = user && (!allowed.length || allowed.includes(user.username))
 
   if (!authorized) {
     return (
@@ -20,6 +21,7 @@ function ProtectedPages({ activeTab, user, onLogin }) {
           onLogin={onLogin}
           scope={scope}
           expectedUsername={expectedUsername}
+          allowedUsernames={allowed}
           sectionLabel={scopeLabel(scope)}
         />
       </div>

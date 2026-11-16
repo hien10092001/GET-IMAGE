@@ -2,12 +2,14 @@ const SCOPES = [
   {
     key: 'admin',
     username: 'admin',
+    allowedUsernames: ['admin'],
     label: 'DS CONTAINER',
     tabs: ['containers', 'depots', 'sanluong', 'sanluonght'],
   },
   {
     key: 'baogia',
     username: 'baogia',
+    allowedUsernames: ['baogia', 'admin'],
     label: 'SL SC PAD',
     tabs: ['slscpad'],
   },
@@ -23,6 +25,12 @@ export function requiredUsername(scope) {
   return SCOPES.find(item => item.key === scope)?.username || ''
 }
 
+export function allowedUsernames(scope) {
+  const item = SCOPES.find(s => s.key === scope)
+  if (!item) return []
+  return item.allowedUsernames || (item.username ? [item.username] : [])
+}
+
 export function scopeLabel(scope) {
   return SCOPES.find(item => item.key === scope)?.label || ''
 }
@@ -32,7 +40,8 @@ function readSession(scope) {
     const raw = localStorage.getItem(storageKey(scope))
     if (!raw) return null
     const session = JSON.parse(raw)
-    if (!session?.token || session.user?.username !== requiredUsername(scope)) return null
+    const allowed = allowedUsernames(scope)
+    if (!session?.token || !allowed.includes(session.user?.username)) return null
     return session
   } catch {
     return null
@@ -45,7 +54,7 @@ function migrateLegacySession(scope) {
     const rawUser = localStorage.getItem('user')
     if (!token || !rawUser) return null
     const user = JSON.parse(rawUser)
-    if (user?.username !== requiredUsername(scope)) return null
+    if (!allowedUsernames(scope).includes(user?.username)) return null
     const session = { token, user }
     localStorage.setItem(storageKey(scope), JSON.stringify(session))
     return session

@@ -227,6 +227,14 @@ const safeSheetName = (name) => {
 }
 
 function SlScPad() {
+  const isAdmin = (() => {
+    try {
+      const u = JSON.parse(localStorage.getItem('user') || '{}')
+      return u?.role === 'Admin' || u?.username === 'admin'
+    } catch {
+      return false
+    }
+  })()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -998,22 +1006,24 @@ function SlScPad() {
       ellipsis: true, render: v => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
     },
     {
-      title: 'Hành động', key: 'action', width: 90, fixed: 'right',
+      title: 'Hành động', key: 'action', width: isAdmin ? 90 : 50, fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
           <Tooltip title="Sửa chi tiết">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)} />
           </Tooltip>
-          <Popconfirm
-            title="Xóa dòng này?"
-            onConfirm={() => handleDelete(record._id)}
-            okText="Xóa"
-            cancelText="Hủy"
-          >
-            <Tooltip title="Xóa">
-              <Button type="text" danger size="small" icon={<DeleteOutlined />} />
-            </Tooltip>
-          </Popconfirm>
+          {isAdmin && (
+            <Popconfirm
+              title="Xóa dòng này?"
+              onConfirm={() => handleDelete(record._id)}
+              okText="Xóa"
+              cancelText="Hủy"
+            >
+              <Tooltip title="Xóa">
+                <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -1041,22 +1051,24 @@ function SlScPad() {
       ellipsis: true, render: v => (v ? <Tooltip title={v}>{v}</Tooltip> : '-'),
     },
     {
-      title: 'Hành động', key: 'action', width: 90, fixed: 'right',
+      title: 'Hành động', key: 'action', width: isAdmin ? 90 : 50, fixed: 'right',
       render: (_, record) => (
         <Space size={0}>
           <Tooltip title="Sửa CONT">
             <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openItemEdit(record)} />
           </Tooltip>
-          <Popconfirm
-            title="Xóa dòng này khỏi kỳ?"
-            onConfirm={() => handleRemoveItem(record._index)}
-            okText="Xóa"
-            cancelText="Hủy"
-          >
-            <Tooltip title="Xóa dòng">
-              <Button type="text" danger size="small" icon={<DeleteOutlined />} />
-            </Tooltip>
-          </Popconfirm>
+          {isAdmin && (
+            <Popconfirm
+              title="Xóa dòng này khỏi kỳ?"
+              onConfirm={() => handleRemoveItem(record._index)}
+              okText="Xóa"
+              cancelText="Hủy"
+            >
+              <Tooltip title="Xóa dòng">
+                <Button type="text" danger size="small" icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -1242,16 +1254,18 @@ function SlScPad() {
               {selectedRowKeys.length > 0 && (
                 <>
                   <Tag color="orange">Đã chọn: {selectedRowKeys.length}</Tag>
+                  {isAdmin && (
                   <Popconfirm
                     title={`Xóa ${selectedRowKeys.length} dòng đã chọn?`}
                     onConfirm={handleDeleteMany}
                     okText="Xóa"
                     cancelText="Hủy"
                   >
-                    <Button size="small" danger icon={<DeleteOutlined />}>
-                      Xóa {selectedRowKeys.length} dòng
-                    </Button>
-                  </Popconfirm>
+                      <Button size="small" danger icon={<DeleteOutlined />}>
+                        Xóa {selectedRowKeys.length} dòng
+                      </Button>
+                    </Popconfirm>
+                  )}
                   <Button size="small" onClick={() => setSelectedRowKeys([])}>Bỏ chọn</Button>
                 </>
               )}
@@ -1588,16 +1602,18 @@ function SlScPad() {
                   >
                     Tải Excel
                   </Button>
-                  <Popconfirm
-                    title="Xóa kỳ sản lượng này?"
-                    description="Các container trong kỳ sẽ được trả về danh sách SC PAD."
-                    onConfirm={handleDeletePeriod}
-                    okText="Xóa kỳ"
-                    okButtonProps={{ danger: true, loading: periodDeleting }}
-                    cancelText="Hủy"
-                  >
-                    <Button danger icon={<DeleteOutlined />}>Xóa kỳ</Button>
-                  </Popconfirm>
+                  {isAdmin && (
+                    <Popconfirm
+                      title="Xóa kỳ sản lượng này?"
+                      description="Các container trong kỳ sẽ được trả về danh sách SC PAD."
+                      onConfirm={handleDeletePeriod}
+                      okText="Xóa kỳ"
+                      okButtonProps={{ danger: true, loading: periodDeleting }}
+                      cancelText="Hủy"
+                    >
+                      <Button danger icon={<DeleteOutlined />}>Xóa kỳ</Button>
+                    </Popconfirm>
+                  )}
                 </Space>
               </div>
               <Row gutter={12} style={{ marginTop: 16 }}>

@@ -4,7 +4,7 @@ import { ConfigProvider, Layout, Menu, Tag, Button, Card, Progress, Alert, Uploa
 import { FolderOpenOutlined, FileExcelOutlined, CopyOutlined, SearchOutlined, CompressOutlined, ScissorOutlined, DeleteOutlined, DownloadOutlined, UploadOutlined, ContainerOutlined, UserOutlined, LogoutOutlined, LockOutlined, FileImageOutlined, MenuFoldOutlined, MenuUnfoldOutlined, ShopOutlined, TranslationOutlined, CloseOutlined, DollarOutlined } from '@ant-design/icons'
 import ProtectedPages from './components/ProtectedPages'
 import Login from './pages/Login'
-import { scopeForTab, loadSessions, activateSession, clearSession, requiredUsername, scopeLabel } from './services/sectionAuth'
+import { scopeForTab, loadSessions, activateSession, clearSession, requiredUsername, allowedUsernames, scopeLabel } from './services/sectionAuth'
 import './App.css'
 
 const EstTranslator = lazy(() => import('./pages/EstTranslator'))
@@ -51,7 +51,8 @@ function App() {
   const activeScope = scopeForTab(activeTab)
   const user = activeScope ? sessions[activeScope] : null
   const expectedUsername = requiredUsername(activeScope)
-  const needsLogin = Boolean(activeScope) && (!user || user.username !== expectedUsername)
+  const scopeAllowedUsernames = allowedUsernames(activeScope)
+  const needsLogin = Boolean(activeScope) && (!user || !scopeAllowedUsernames.includes(user.username))
 
   const tabColors = {
     excel: '#1a73e8',
@@ -155,6 +156,7 @@ function App() {
             onLogin={handleLogin}
             scope={activeScope}
             expectedUsername={expectedUsername}
+            allowedUsernames={scopeAllowedUsernames}
             sectionLabel={scopeLabel(activeScope)}
           />
         </div>

@@ -5,7 +5,12 @@ import { authMiddleware, usernameMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
-router.use(authMiddleware, usernameMiddleware('baogia'))
+const adminOnly = (req, res, next) => {
+  if (req.user?.role === 'Admin' || req.user?.username === 'admin') return next()
+  return res.status(403).json({ message: 'Chỉ tài khoản admin mới có quyền xóa' })
+}
+
+router.use(authMiddleware, usernameMiddleware('baogia', 'admin'))
 
 const parseNumber = (value) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0
@@ -187,7 +192,7 @@ router.put('/history/:id', authMiddleware, async (req, res) => {
   }
 })
 
-router.delete('/history/:id', authMiddleware, async (req, res) => {
+router.delete('/history/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const history = await SlScPadHistory.findById(req.params.id)
     if (!history) return res.status(404).json({ message: 'Không tìm thấy lịch sử sản lượng' })
@@ -382,7 +387,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 })
 
-router.post('/delete-many', authMiddleware, async (req, res) => {
+router.post('/delete-many', authMiddleware, adminOnly, async (req, res) => {
   try {
     const { ids } = req.body
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -413,7 +418,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
   }
 })
 
-router.delete('/:id', authMiddleware, async (req, res) => {
+router.delete('/:id', authMiddleware, adminOnly, async (req, res) => {
   try {
     const deleted = await SlScPad.findByIdAndDelete(req.params.id)
     if (!deleted) return res.status(404).json({ message: 'Không tìm thấy dòng dữ liệu' })

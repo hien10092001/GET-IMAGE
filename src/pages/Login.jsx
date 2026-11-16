@@ -2,11 +2,11 @@ import { useState } from 'react'
 import { Card, Form, Input, Button, Alert, Typography } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import api from '../services/api'
-import { saveSession } from '../services/sectionAuth'
+import { saveSession, allowedUsernames as allowedForScope } from '../services/sectionAuth'
 
 const { Title, Text } = Typography
 
-function Login({ onLogin, scope, expectedUsername, sectionLabel }) {
+function Login({ onLogin, scope, allowedUsernames, sectionLabel }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -16,8 +16,12 @@ function Login({ onLogin, scope, expectedUsername, sectionLabel }) {
     try {
       const res = await api.post('/auth/login', values)
       const user = res.data.user
-      if (expectedUsername && user.username !== expectedUsername) {
-        setError(`Khu vực ${sectionLabel || 'này'} dùng tài khoản "${expectedUsername}"`)
+      const allowed = Array.isArray(allowedUsernames) && allowedUsernames.length
+        ? allowedUsernames
+        : allowedForScope(scope)
+      if (allowed.length && !allowed.includes(user.username)) {
+        const hint = allowed.length === 1 ? `"${allowed[0]}"` : allowed.map(u => `"${u}"`).join(' hoặc ')
+        setError(`Khu vực ${sectionLabel || 'này'} dùng tài khoản ${hint}`)
         return
       }
       const session = { token: res.data.token, user }
