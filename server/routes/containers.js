@@ -6,7 +6,16 @@ import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
-router.use(authMiddleware, roleMiddleware('Admin'))
+const adminGuard = (req, res, next) => {
+  authMiddleware(req, res, () => roleMiddleware('Admin')(req, res, next))
+}
+
+router.use((req, res, next) => {
+  if (req.method === 'GET' && req.path === '/') return next()
+  return adminGuard(req, res, next)
+})
+
+const PUBLIC_FIELDS = ['_id', 'containerNo', 'shippingLine', 'size', 'location', 'remark', 'bay', 'locked', 'createdAt', '_source']
 
 const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -209,6 +218,12 @@ router.get('/', async (req, res) => {
       ...item,
       shippingLists: containerListMap[item.containerNo] || [],
     }))
+
+    if (!req.user) {
+      data = data.map((item) => Object.fromEntries(
+        PUBLIC_FIELDS.filter((key) => key in item).map((key) => [key, item[key]])
+      ))
+    }
 
     res.json({
       data,
