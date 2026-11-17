@@ -572,17 +572,24 @@ function LockProduction() {
   const [lockShift, setLockShift] = useState('sáng')
   const [detailOpen, setDetailOpen] = useState(false)
   const [currentLock, setCurrentLock] = useState(null)
+  const openLockDetail = (lock) => {
+    setCurrentLock(lock)
+    setDetailContainerSearch('')
+    setDetailShippingLineSearch('')
+    setDetailOpen(true)
+  }
   const [itemModalOpen, setItemModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const [itemForm] = Form.useForm()
-  const [addContainerNo, setAddContainerNo] = useState('')
-  const [addShippingLine, setAddShippingLine] = useState('')
-  const [addSize, setAddSize] = useState('')
-  const [addBay, setAddBay] = useState('')
-  const [addLocation, setAddLocation] = useState('')
-  const [addRemark, setAddRemark] = useState('')
-  const addNoRef = useRef(null)
+  const [detailContainerSearch, setDetailContainerSearch] = useState('')
+  const [detailShippingLineSearch, setDetailShippingLineSearch] = useState('')
+  const detailContainerKeyword = detailContainerSearch.trim().toLowerCase()
+  const detailShippingLineKeyword = detailShippingLineSearch.trim().toLowerCase()
+  const detailItems = (currentLock?.items || []).filter(item =>
+    (!detailContainerKeyword || String(item.containerNo || '').toLowerCase().includes(detailContainerKeyword)) &&
+    (!detailShippingLineKeyword || String(item.shippingLine || '').toLowerCase().includes(detailShippingLineKeyword))
+  )
   const [searchText, setSearchText] = useState('')
   const [search, setSearch] = useState('')
   const searchTimerRef = useRef(null)
@@ -590,6 +597,7 @@ function LockProduction() {
   const [filterShift, setFilterShift] = useState('')
   const [filterShippingLine, setFilterShippingLine] = useState('')
   const [filterSize, setFilterSize] = useState('')
+  const [filterYear, setFilterYear] = useState('')
   const [lockType, setLockType] = useState('container')
   const [sanLuongTab, setSanLuongTab] = useState('san-luong-container')
   const [previewOpen, setPreviewOpen] = useState(false)
@@ -620,6 +628,14 @@ function LockProduction() {
   const [fileViewData, setFileViewData] = useState([])
   const [fileFillDate, setFileFillDate] = useState(dayjs())
   const fileViewDate = fileFillDate.format('DD.MM')
+  const [includeYearInDaily, setIncludeYearInDaily] = useState(() => {
+    try {
+      const saved = localStorage.getItem('includeYearInDaily')
+      return saved === null ? true : saved === '1'
+    } catch {
+      return true
+    }
+  })
   const [fileFilling, setFileFilling] = useState(false)
   const [emailOpen, setEmailOpen] = useState(false)
   const [emailSending, setEmailSending] = useState(false)
@@ -646,6 +662,7 @@ function LockProduction() {
     containerNo: true,
     shippingLine: false,
     size: false,
+    year: false,
     location: true,
     remark: true,
     bay: false,
@@ -657,6 +674,7 @@ function LockProduction() {
     containerNo: 'Container No',
     shippingLine: 'Hãng tàu',
     size: 'Size',
+    year: 'Năm',
     location: 'Phân Loại',
     remark: 'Ghi chú',
     bay: 'Bay',
@@ -680,6 +698,7 @@ function LockProduction() {
       if (f === 'Container No') row[f] = item.containerNo || ''
       else if (f === 'Hãng tàu') row[f] = item.shippingLine || ''
       else if (f === 'Size') row[f] = item.size || ''
+      else if (f === 'Năm') row[f] = item.year || ''
       else if (f === 'Phân Loại') row[f] = item.location || ''
       else if (f === 'Ghi chú') row[f] = item.remark || ''
       else if (f === 'Bay') row[f] = item.bay || ''
@@ -703,6 +722,7 @@ function LockProduction() {
     if (filterShift) params.shift = filterShift
     if (filterShippingLine) params.shippingLine = filterShippingLine
     if (filterSize) params.size = filterSize
+    if (filterYear) params.year = filterYear
     params.type = lockType
     api.get('/locks', { params }).then(res => {
       setLocks(res.data)
@@ -711,29 +731,26 @@ function LockProduction() {
     }).finally(() => setLoading(false))
   }
 
-  useEffect(() => { fetchLocks() }, [search, filterDateRange, filterShift, filterShippingLine, filterSize, lockType])
+  useEffect(() => { fetchLocks() }, [search, filterDateRange, filterShift, filterShippingLine, filterSize, filterYear, lockType])
 
   const handleLock = async () => {
     try {
       const existing = locks.find(l => l.date === lockDate && l.shift === lockShift)
       if (existing) {
-        setCurrentLock(existing)
-        setDetailOpen(true)
+        openLockDetail(existing)
         return
       }
       const res = await api.post('/locks', { date: lockDate, shift: lockShift, items: [], type: lockType })
       message.success(`Đã chốt sản lượng ca ${lockShift} ngày ${lockDate}`)
       fetchLocks()
-      setCurrentLock(res.data)
-      setDetailOpen(true)
+      openLockDetail(res.data)
     } catch (e) {
       message.error(e.response?.data?.message || 'Lỗi chốt sản lượng')
     }
   }
 
   const handleViewLock = (lock) => {
-    setCurrentLock(lock)
-    setDetailOpen(true)
+    openLockDetail(lock)
   }
 
   const buildSheetPreview = (ws) => {
@@ -772,7 +789,7 @@ function LockProduction() {
         const res = await fetch(f.url)
         if (!res.ok) throw new Error(`Không tải được ${f.name}`)
         const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
-        fillWorkbook(wb, f, sang, toi, classifyInfo, dateLabel, dateStr)
+        fillWorkbook(wb, f, sang, toi, classifyInfo, dateLabel, dateStr, includeYearInDaily)
         data.push({ ...f, sheets: wb.SheetNames.map(sn => ({ name: sn, ...buildSheetPreview(wb.Sheets[sn]) })) })
       }
       if (isCancelled?.()) return
@@ -1086,7 +1103,7 @@ function LockProduction() {
     ws['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 10 }]
   }
 
-  const fillWorkbook = (wb, file, sang, toi, { keywords }, dateLabel, dateStr) => {
+  const fillWorkbook = (wb, file, sang, toi, { keywords }, dateLabel, dateStr, includeYear = false) => {
     const isDepot = file.name.includes('DEPOT')
     if (isDepot) {
       const allItems = [...sang, ...toi]
@@ -1103,26 +1120,36 @@ function LockProduction() {
       const setupSheet = (sheetName, title, items) => {
         const ws = wb.Sheets[sheetName]
         if (!ws) return
+        const lastCol = includeYear ? 7 : 6
+        const headers = ['', 'CONTAINER', 'HT', 'SIZE', ...(includeYear ? ['NĂM'] : []), 'NGÀY', 'PL', 'GHI CHÚ']
         ws['A1'] = { t: 's', v: title }
         clearSheetBody(ws, 2)
+        headers.forEach((h, C) => {
+          ws[XLSXStyle.utils.encode_cell({ r: 1, c: C })] = { t: 's', v: h }
+        })
+        const titleMerge = (ws['!merges'] || []).find(m => m.s.r === 0 && m.e.r === 0)
+        if (titleMerge) titleMerge.e.c = lastCol
         const rows = items.map((it, idx) => [
           idx + 1,
           it.containerNo || '',
           it.shippingLine || '',
           it.size || '',
+          ...(includeYear ? [it.year || ''] : []),
           it._createdAt ? dayjs(it._createdAt).format('DD/MM/YYYY') : dateLabel,
           it.location || '',
           it.remark || '',
         ])
         XLSX.utils.sheet_add_aoa(ws, rows, { origin: { r: 2, c: 0 } })
         const lastRow = Math.max(2, 1 + rows.length)
-        styleRange(ws, 0, 0, 0, 6, () => TITLE_STYLE)
-        styleRange(ws, 1, 0, 1, 6, () => HEADER_STYLE)
-        styleRange(ws, 2, 0, lastRow, 6, (R, C, cell) => (C === 0 || (cell && cell.t === 'n') ? CENTER_BODY_STYLE : BODY_STYLE))
+        styleRange(ws, 0, 0, 0, lastCol, () => TITLE_STYLE)
+        styleRange(ws, 1, 0, 1, lastCol, () => HEADER_STYLE)
+        styleRange(ws, 2, 0, lastRow, lastCol, (R, C, cell) => (C === 0 || (includeYear && C === 4) || (cell && cell.t === 'n') ? CENTER_BODY_STYLE : BODY_STYLE))
         ws['!rows'] = ws['!rows'] || []
         ws['!rows'][0] = { ...(ws['!rows'][0] || {}), hpt: 24 }
         ws['!rows'][1] = { ...(ws['!rows'][1] || {}), hpt: 22 }
-        ws['!cols'] = [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 10 }, { wch: 24 }]
+        ws['!cols'] = includeYear
+          ? [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 13 }, { wch: 10 }, { wch: 24 }]
+          : [{ wch: 6 }, { wch: 16 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 10 }, { wch: 24 }]
       }
       setupSheet('CA SANG', `TỪ 06H00 NGÀY ${dateLabel}`, sang)
       setupSheet('CA TOI', `TỪ 18H00 NGÀY ${dateLabel}`, toi)
@@ -1189,7 +1216,7 @@ function LockProduction() {
     }
   }
 
-  const buildFilledFile = async (file) => {
+  const buildFilledFile = async (file, includeYear = false) => {
     const dateStr = fileFillDate.format('YYYY-MM-DD')
     const dateLabel = fileFillDate.format('DD/MM/YYYY')
     const isDaily = file.name.includes('PHAN LOẠI')
@@ -1208,7 +1235,7 @@ function LockProduction() {
     const res = await fetch(file.url)
     if (!res.ok) throw new Error('Không tải được template')
     const wb = XLSXStyle.read(await res.arrayBuffer(), { type: 'array' })
-    fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel, dateStr)
+    fillWorkbook(wb, file, sang, toi, classifyInfo, dateLabel, dateStr, includeYear)
     const isDepot = file.name.includes('DEPOT')
     const shortDate = fileFillDate.format('DD.MM')
     return {
@@ -1229,7 +1256,7 @@ function LockProduction() {
   const downloadFilledFile = async (file) => {
     setFileFilling(true)
     try {
-      const built = await buildFilledFile(file)
+        const built = await buildFilledFile(file, includeYearInDaily)
       if (!built) return
       XLSXStyle.writeFile(built.wb, built.filename)
       message.success(`Đã điền ${built.sang.length} container ca sáng, ${built.toi.length} ca tối`)
@@ -1321,7 +1348,7 @@ function LockProduction() {
       setEmailSending(true)
       const attachments = []
       for (const file of files) {
-        const built = await buildFilledFile(file)
+      const built = await buildFilledFile(file, includeYearInDaily)
         if (!built) throw new Error(`Không có dữ liệu cho ${file.name}`)
         attachments.push({
           filename: built.filename,
@@ -1356,38 +1383,7 @@ function LockProduction() {
     let cancelled = false
     loadFileViewData(fileFillDate.format('YYYY-MM-DD'), () => cancelled)
     return () => { cancelled = true }
-  }, [fileViewOpen, fileFillDate, lockType])
-
-  const handleAddItem = async () => {
-    if (!addContainerNo || !addShippingLine || !addSize) {
-      message.warning('Nhập Container No, Hãng tàu và Size')
-      return
-    }
-    if (!currentLock) return
-    try {
-      const newItem = {
-        containerNo: addContainerNo,
-        shippingLine: addShippingLine,
-        size: addSize,
-        bay: addBay,
-        location: addLocation,
-        remark: addRemark,
-        source: 'manual',
-      }
-      const res = await api.put(`/locks/${currentLock._id}/items`, { items: [newItem] })
-      setCurrentLock(res.data)
-      setAddContainerNo('')
-      setAddShippingLine('')
-      setAddSize('')
-      setAddBay('')
-      setAddLocation('')
-      setAddRemark('')
-      addNoRef.current?.focus()
-      message.success('Đã thêm')
-    } catch (e) {
-      message.error(e.response?.data?.message || 'Lỗi thêm')
-    }
-  }
+  }, [fileViewOpen, fileFillDate, lockType, includeYearInDaily])
 
   const openEditItem = (item) => {
     setEditingItem(item)
@@ -1447,6 +1443,7 @@ function LockProduction() {
           const ci = header.findIndex(h => /cont|soc/i.test(h))
           const si = header.findIndex(h => /hang|shipping|hãng|tàu/i.test(h))
           const zi = header.findIndex(h => /size/i.test(h))
+          const yi = header.findIndex(h => /^(năm|nam|year)( .*)?$/i.test(h))
           const li = header.findIndex(h => /phân|loại|location/i.test(h))
           const bi = header.findIndex(h => /bay/i.test(h))
           const ri = header.findIndex(h => /ghi|chú|remark/i.test(h))
@@ -1460,6 +1457,7 @@ function LockProduction() {
             containerNo: String(r[ci]).toUpperCase().trim(),
             shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
             size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
+            year: yi >= 0 && r[yi] ? String(r[yi]).trim() : '',
             location: li >= 0 && r[li] ? String(r[li]).trim() : '',
             bay: bi >= 0 && r[bi] ? String(r[bi]).toUpperCase().trim() : '',
             remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
@@ -1503,8 +1501,7 @@ function LockProduction() {
           await api.put(`/locks/${existing._id}/items`, { items: previewItems })
         } else {
           const res = await api.post('/locks', { date: previewSource.date, shift: previewSource.shift, items: previewItems, type: lockType })
-          setCurrentLock(res.data)
-          setDetailOpen(true)
+          openLockDetail(res.data)
         }
       } else if (previewSource?.type === 'detail' && previewSource.lockId) {
         const res = await api.put(`/locks/${previewSource.lockId}/items`, { items: previewItems })
@@ -1550,7 +1547,7 @@ function LockProduction() {
     if (!currentLock) return
     const activeFields = getActiveExportFields()
     if (activeFields.length === 0) { message.warning('Chọn ít nhất một cột'); return }
-    const rows = currentLock.items.map((c, i) =>
+    const rows = detailItems.map((c, i) =>
       buildExportRow({ ...c, createdAt: currentLock.date, _idx: i }, activeFields)
     )
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -1775,6 +1772,7 @@ function LockProduction() {
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo' },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 100 },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 80 },
+    { title: 'Năm', dataIndex: 'year', key: 'year', width: 60 },
     { title: 'Nguồn', dataIndex: 'source', key: 'source', width: 80,
       render: v => {
         if (v === 'depot') return <Tag color="purple">Depot</Tag>
@@ -1871,6 +1869,7 @@ function LockProduction() {
     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 160 },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 140 },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 80 },
+    { title: 'Năm', dataIndex: 'year', key: 'year', width: 60 },
     { title: 'Nguồn', dataIndex: 'source', key: 'source', width: 80,
       render: v => {
         if (v === 'depot') return <Tag color="purple">Depot</Tag>
@@ -2022,6 +2021,15 @@ function LockProduction() {
               onClear={() => setFilterSize('')}
             />
           </Col>
+          <Col xs={12} md={3}>
+            <Input
+              placeholder="Năm"
+              value={filterYear}
+              onChange={e => setFilterYear(e.target.value.trim())}
+              allowClear
+              onClear={() => setFilterYear('')}
+            />
+          </Col>
         </Row>
       </Card>
 
@@ -2125,19 +2133,14 @@ function LockProduction() {
         open={detailOpen}
         onCancel={() => setDetailOpen(false)}
         footer={null}
-        width={1100}
+        width="100%"
+        style={{ top: 0, left: 0, right: 0, bottom: 0, height: '100vh', maxWidth: '100vw', margin: 0, padding: 0 }}
+        styles={{ wrapper: { height: '100vh', padding: 0 }, container: { height: '100vh' }, body: { height: 'calc(100vh - 116px)', overflowY: 'auto' } }}
       >
         {currentLock && (
           <>
             <div className="flex items-center justify-between mb-3">
               <Space>
-                <Button type="primary" icon={<PlusOutlined />} style={{ background: '#1890ff', borderColor: '#1890ff' }} onClick={() => {
-                  setEditingItem(null)
-                  itemForm.resetFields()
-                  setItemModalOpen(true)
-                }}>
-                  Thêm container
-                </Button>
                 <Popover
                   trigger="click"
                   title="Chọn cột xuất"
@@ -2160,7 +2163,7 @@ function LockProduction() {
                 <Button type="primary" icon={<ExportOutlined />} style={{ background: '#52c41a', borderColor: '#52c41a' }} onClick={exportLockExcel}>
                   Xuất Excel
                 </Button>
-                <Button icon={<CopyOutlined />} onClick={() => copyItemsToClipboard(currentLock.items)}>
+                <Button icon={<CopyOutlined />} onClick={() => copyItemsToClipboard(detailItems)}>
                   Copy
                 </Button>
                 <Upload accept=".xlsx,.xls" showUploadList={false} beforeUpload={async (file) => {
@@ -2186,47 +2189,33 @@ function LockProduction() {
             <Divider />
 
             <Row gutter={12} className="mb-3">
-              <Col span={5}>
-                <Input ref={addNoRef} placeholder="Container No" value={addContainerNo} onChange={e => setAddContainerNo(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
+              <Col xs={24} md={8}>
+                <Input prefix={<SearchOutlined />} placeholder="Tìm số cont" value={detailContainerSearch} onChange={e => setDetailContainerSearch(e.target.value)} allowClear />
               </Col>
-              <Col span={4}>
-                <Input placeholder="Hãng tàu" value={addShippingLine} onChange={e => setAddShippingLine(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
-              </Col>
-              <Col span={3}>
-                <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
-              </Col>
-              <Col span={3}>
-                <Input placeholder="Phân Loại" value={addLocation} onChange={e => setAddLocation(e.target.value.toUpperCase())} />
-              </Col>
-              <Col span={4}>
-                <Input placeholder="Ghi chú" value={addRemark} onChange={e => setAddRemark(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAddItem()} />
-              </Col>
-              <Col span={3}>
-                <Input placeholder="Bay" value={addBay} onChange={e => setAddBay(e.target.value.toUpperCase())} />
-              </Col>
-              <Col>
-                <Button type="primary" icon={<PlusOutlined />} onClick={handleAddItem}>Thêm</Button>
+              <Col xs={24} md={8}>
+                <Input prefix={<SearchOutlined />} placeholder="Tìm hãng tàu" value={detailShippingLineSearch} onChange={e => setDetailShippingLineSearch(e.target.value)} allowClear />
               </Col>
             </Row>
 
             <Table
               columns={columns}
-              dataSource={currentLock.items}
+              dataSource={detailItems}
               rowKey="_id"
-              scroll={{ x: 1000 }}
+              scroll={{ x: 'max-content' }}
               pagination={false}
+              locale={{ emptyText: 'Không tìm thấy container' }}
             />
           </>
         )}
       </Modal>
 
       <Modal
-        title={editingItem ? 'Sửa container' : 'Thêm container'}
+        title="Sửa container"
         open={itemModalOpen}
-        onOk={editingItem ? handleEditItem : handleAddItem}
+        onOk={handleEditItem}
         onCancel={() => { setItemModalOpen(false); setEditingItem(null) }}
         confirmLoading={submitting}
-        okText={editingItem ? 'Cập nhật' : 'Thêm'}
+        okText="Cập nhật"
         cancelText="Hủy"
         width={600}
       >
@@ -2253,12 +2242,17 @@ function LockProduction() {
             />
           </Form.Item>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item name="size" label="Size" rules={[{ required: true, message: 'Nhập size' }]}>
                 <Input placeholder="VD: 40HC" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
+              <Form.Item name="year" label="Năm">
+                <Input placeholder="VD: 2024" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
               <Form.Item name="location" label="Phân Loại">
                 <Input placeholder="VD: Hư hỏng nặng / Nhẹ / ..." onInput={e => e.target.value = e.target.value.toUpperCase()} />
               </Form.Item>
@@ -2393,12 +2387,17 @@ function LockProduction() {
             />
           </Form.Item>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item name="size" label="Size" rules={[{ required: true, message: 'Nhập size' }]}>
                 <Input placeholder="VD: 40HC" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
+              <Form.Item name="year" label="Năm">
+                <Input placeholder="VD: 2024" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
               <Form.Item name="location" label="Phân Loại">
                 <Input placeholder="VD: Hư hỏng nặng / Nhẹ / ..." onInput={e => e.target.value = e.target.value.toUpperCase()} />
               </Form.Item>
@@ -2489,6 +2488,7 @@ function LockProduction() {
                 { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 160 },
                 { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 130 },
                 { title: 'Size', dataIndex: 'size', key: 'size', width: 70 },
+                { title: 'Năm', dataIndex: 'year', key: 'year', width: 60 },
                 {
                   title: 'List tàu', key: 'shippingLists', width: 180,
                   render: (_, r) => {
@@ -2627,6 +2627,7 @@ function LockProduction() {
                     { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo', width: 160 },
                     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 140 },
                     { title: 'Size', dataIndex: 'size', key: 'size', width: 70 },
+                    { title: 'Năm', dataIndex: 'year', key: 'year', width: 60 },
                     {
                       title: 'DA SUA CHUA', key: 'dscGroup', width: 150,
                       render: (_, r) => renderMultiTag(r.dsc || r.choHtxnDvs || r.sc, 'green'),
@@ -2763,6 +2764,18 @@ function LockProduction() {
                         <Button icon={<MailOutlined />} onClick={() => openEmailModal(file)}>
                           Gửi email tự động
                         </Button>
+                        {file.name.includes('PHAN LOẠI') && !file.name.includes('DEPOT') && (
+                          <Checkbox
+                            checked={includeYearInDaily}
+                            onChange={(e) => {
+                              const checked = e.target.checked
+                              setIncludeYearInDaily(checked)
+                              try { localStorage.setItem('includeYearInDaily', checked ? '1' : '0') } catch { /* ignore */ }
+                            }}
+                          >
+                            Hiện cột Năm
+                          </Checkbox>
+                        )}
                       </Space>
                     </div>
                     {file.sheets.length > 1 ? (

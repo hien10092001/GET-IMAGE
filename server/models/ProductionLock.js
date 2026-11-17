@@ -4,6 +4,7 @@ const lockItemSchema = new mongoose.Schema({
   containerNo: { type: String, required: true, trim: true, uppercase: true },
   shippingLine: { type: String, required: true, trim: true },
   size: { type: String, required: true },
+  year: { type: String, default: '', trim: true },
   bay: { type: String, trim: true },
   location: { type: String, trim: true },
   remark: { type: String, trim: true },

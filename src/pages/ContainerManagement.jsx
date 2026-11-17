@@ -18,7 +18,7 @@ function ContainerManagement() {
   const [search, setSearch] = useState('')
   const [searchText, setSearchText] = useState('')
   const searchTimerRef = useRef(null)
-  const [filters, setFilters] = useState({ shippingLine: '', size: '', location: '', remark: '', locked: '' })
+  const [filters, setFilters] = useState({ shippingLine: '', size: '', year: '', location: '', remark: '', locked: '' })
   const [dateRange, setDateRange] = useState(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -31,6 +31,7 @@ function ContainerManagement() {
     containerNo: true,
     shippingLine: false,
     size: false,
+    year: false,
     location: true,
     remark: true,
     bay: false,
@@ -43,6 +44,7 @@ function ContainerManagement() {
     containerNo: 'Container No',
     shippingLine: 'Hãng tàu',
     size: 'Size',
+    year: 'Năm',
     location: 'Phân Loại',
     remark: 'Ghi chú',
     bay: 'Bay',
@@ -55,6 +57,7 @@ function ContainerManagement() {
   const [addContainerNo, setAddContainerNo] = useState('')
   const [addShippingLine, setAddShippingLine] = useState('')
   const [addSize, setAddSize] = useState('')
+  const [addYear, setAddYear] = useState('')
   const [addBay, setAddBay] = useState('')
   const [addLocation, setAddLocation] = useState('')
   const [addRemark, setAddRemark] = useState('')
@@ -114,6 +117,7 @@ function ContainerManagement() {
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
+    if (filters.year) params.year = filters.year
     if (filters.location) params.location = filters.location
     if (filters.remark) params.remark = filters.remark
     if (filters.locked) params.locked = filters.locked
@@ -136,6 +140,7 @@ function ContainerManagement() {
     if (search) params.search = search
     if (filters.shippingLine) params.shippingLine = filters.shippingLine
     if (filters.size) params.size = filters.size
+    if (filters.year) params.year = filters.year
     if (filters.location) params.location = filters.location
     if (filters.remark) params.remark = filters.remark
     if (filters.locked) params.locked = filters.locked
@@ -182,6 +187,7 @@ function ContainerManagement() {
         containerNo: addContainerNo,
         shippingLine: addShippingLine,
         size: addSize,
+        year: addYear,
         bay: addBay,
         location: addLocation,
         remark: addRemark,
@@ -196,6 +202,7 @@ function ContainerManagement() {
       setAddContainerNo('')
       setAddShippingLine('')
       setAddSize('')
+      setAddYear('')
       setAddBay('')
       setAddLocation('')
       setAddRemark('')
@@ -417,12 +424,14 @@ function ContainerManagement() {
         const ci = header.findIndex(h => /s.?[o0].*cont|cont|soc/i.test(h))
         const si = header.findIndex(h => /hang|shipping|line|hãng|tàu/i.test(h))
         const zi = header.findIndex(h => /size|loại/i.test(h))
+        const yi = header.findIndex(h => /^(năm|nam|year)( .*)?$/i.test(h))
         const bi = header.findIndex(h => /bay/i.test(h))
         if (ci === -1) { message.error('Không tìm thấy cột Container No. Cột hiện có: ' + header.join(', ')); return }
         const refs = rows.slice(1).filter(r => r[ci]).map(r => ({
           containerNo: String(r[ci]).toUpperCase().trim(),
           shippingLine: si >= 0 && r[si] ? String(r[si]).trim() : '',
           size: zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : '',
+          year: yi >= 0 && r[yi] ? String(r[yi]).trim() : '',
           bay: bi >= 0 && r[bi] ? String(r[bi]).toUpperCase().trim() : '',
         }))
         const merged = [...referenceData, ...refs]
@@ -464,6 +473,7 @@ function ContainerManagement() {
     if (match) {
       if (match.shippingLine) form.setFieldValue('shippingLine', match.shippingLine)
       if (match.size) form.setFieldValue('size', match.size)
+      if (match.year) form.setFieldValue('year', match.year)
       if (match.bay) form.setFieldValue('bay', ensureBayPrefix(match.bay))
     }
     clearTimeout(modalSuggestionTimerRef.current)
@@ -473,7 +483,8 @@ function ContainerManagement() {
         const q = modalSuggestionQueryRef.current
         const curSL = form.getFieldValue('shippingLine')
         const curSize = form.getFieldValue('size')
-        if (!curSL || !curSize) {
+        const curYear = form.getFieldValue('year')
+        if (!curSL || !curSize || !curYear) {
           try {
             const results = await Promise.allSettled([
               api.get(`/locks/container-data/${val}`),
@@ -491,6 +502,12 @@ function ContainerManagement() {
               const szFromCont = results[1].status === 'fulfilled' && results[1].value.data?.find(d => d.size)?.size
               if (szFromLock) form.setFieldValue('size', szFromLock)
               else if (szFromCont) form.setFieldValue('size', szFromCont)
+            }
+            if (!curYear) {
+              const yrFromLock = results[0].status === 'fulfilled' && results[0].value.data?.find(d => d.year)?.year
+              const yrFromCont = results[1].status === 'fulfilled' && results[1].value.data?.find(d => d.year)?.year
+              if (yrFromLock) form.setFieldValue('year', yrFromLock)
+              else if (yrFromCont) form.setFieldValue('year', yrFromCont)
             }
           } catch {}
         }
@@ -513,6 +530,7 @@ function ContainerManagement() {
     if (!v) {
       setAddShippingLine('')
       setAddSize('')
+      setAddYear('')
       setAddBay('')
       setAddLocation('')
       setAddRemark('')
@@ -526,6 +544,7 @@ function ContainerManagement() {
     if (refMatch) {
       if (refMatch.shippingLine) setAddShippingLine(refMatch.shippingLine)
       if (refMatch.size) setAddSize(refMatch.size)
+      if (refMatch.year) setAddYear(refMatch.year)
       if (refMatch.bay) setAddBay(ensureBayPrefix(refMatch.bay))
     }
     clearTimeout(suggestionTimerRef.current)
@@ -552,10 +571,11 @@ function ContainerManagement() {
         lockRes.data.forEach(item => {
           const key = item.containerNo
           if (!groupBy[key]) {
-            groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+            groupBy[key] = { containerNo: key, shippingLine: '', size: '', year: '', bay: '', locations: new Set() }
           }
           if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
           if (item.size) groupBy[key].size = item.size
+          if (item.year) groupBy[key].year = item.year
           if (item.bay) groupBy[key].bay = item.bay
           if (item.location) {
             groupBy[key].locations.add(item.location)
@@ -588,10 +608,11 @@ function ContainerManagement() {
           refMatches.forEach(item => {
             const key = item.containerNo
             if (!groupBy[key]) {
-              groupBy[key] = { containerNo: key, shippingLine: '', size: '', bay: '', locations: new Set() }
+              groupBy[key] = { containerNo: key, shippingLine: '', size: '', year: '', bay: '', locations: new Set() }
             }
             if (item.shippingLine) groupBy[key].shippingLine = item.shippingLine
             if (item.size) groupBy[key].size = item.size
+            if (item.year) groupBy[key].year = item.year
             if (item.bay) groupBy[key].bay = item.bay
           })
           const groups = Object.values(groupBy)
@@ -613,6 +634,7 @@ function ContainerManagement() {
   const fillFieldsFromGroup = (g) => {
     setAddShippingLine(g.shippingLine)
     setAddSize(g.size)
+    setAddYear(g.year || '')
     setAddBay(ensureBayPrefix(g.bay))
     const locs = [...g.locations].filter(Boolean)
     if (locs.length === 1) {
@@ -635,6 +657,7 @@ function ContainerManagement() {
       if (search) params.search = search
       if (filters.shippingLine) params.shippingLine = filters.shippingLine
       if (filters.size) params.size = filters.size
+      if (filters.year) params.year = filters.year
       if (filters.location) params.location = filters.location
       if (filters.remark) params.remark = filters.remark
       if (filters.locked) params.locked = filters.locked
@@ -648,6 +671,7 @@ function ContainerManagement() {
         'Container No': c.containerNo,
         'Hãng tàu': c.shippingLine,
         Size: c.size,
+        Năm: c.year || '',
         'Ngày tạo': dayjs(c.createdAt).format('DD/MM/YYYY'),
         'Phân Loại': c.location || '',
         'Ghi chú': c.remark || '',
@@ -696,6 +720,7 @@ function ContainerManagement() {
       if (search) params.search = search
       if (filters.shippingLine) params.shippingLine = filters.shippingLine
       if (filters.size) params.size = filters.size
+      if (filters.year) params.year = filters.year
       if (filters.location) params.location = filters.location
       if (filters.remark) params.remark = filters.remark
       if (filters.locked) params.locked = filters.locked
@@ -705,6 +730,7 @@ function ContainerManagement() {
         containerNo: c.containerNo,
         shippingLine: c.shippingLine,
         size: c.size,
+        year: c.year || '',
         bay: c.bay || '',
         location: c.location || '',
         remark: c.remark || '',
@@ -728,6 +754,7 @@ function ContainerManagement() {
       containerNo: record.containerNo,
       shippingLine: record.shippingLine,
       size: record.size,
+      year: record.year || '',
       bay: record.bay || '',
       location: record.location || '',
       remark: record.remark || '',
@@ -743,6 +770,7 @@ function ContainerManagement() {
         containerNo: values.containerNo,
         shippingLine: values.shippingLine,
         size: values.size,
+        year: values.year || '',
         bay: values.bay || '',
         location: values.location || '',
         remark: values.remark || '',
@@ -772,6 +800,7 @@ function ContainerManagement() {
     },
     { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine', width: 80, sorter: true },
     { title: 'Size', dataIndex: 'size', key: 'size', width: 60, sorter: true },
+    { title: 'Năm', dataIndex: 'year', key: 'year', width: 60, sorter: true },
     { title: 'GRADE', dataIndex: 'location', key: 'location', width: 100 },
     { title: 'Ghi chú', dataIndex: 'remark', key: 'remark', width: 150, ellipsis: true },
     { title: 'Bay', dataIndex: 'bay', key: 'bay', width: 60 },
@@ -861,6 +890,7 @@ function ContainerManagement() {
                   const ci = header.findIndex(h => /cont|soc/i.test(h))
                   const si = header.findIndex(h => /hang|shipping|hãng|tàu/i.test(h))
                   const zi = header.findIndex(h => /size/i.test(h))
+                  const yi = header.findIndex(h => /^(năm|nam|year)( .*)?$/i.test(h))
                   const li = header.findIndex(h => /phân|loại|location/i.test(h))
                   const bi = header.findIndex(h => /bay/i.test(h))
                   const ri = header.findIndex(h => /ghi|chú|remark/i.test(h))
@@ -880,17 +910,20 @@ function ContainerManagement() {
                     const cNo = String(r[ci]).toUpperCase().trim()
                     let sLine = si >= 0 && r[si] ? String(r[si]).trim() : ''
                     let sz = zi >= 0 && r[zi] ? String(r[zi]).toUpperCase().trim() : ''
-                    if (!sLine || !sz) {
+                    let yr = yi >= 0 && r[yi] ? String(r[yi]).trim() : ''
+                    if (!sLine || !sz || !yr) {
                       const ref = referenceData.find(ref => ref.containerNo === cNo)
                       if (ref) {
                         if (!sLine && ref.shippingLine) sLine = ref.shippingLine
                         if (!sz && ref.size) sz = ref.size
+                        if (!yr && ref.year) yr = ref.year
                       }
                     }
                     return {
                       containerNo: cNo,
                       shippingLine: sLine,
                       size: sz,
+                      year: yr,
                       location: li >= 0 && r[li] ? String(r[li]).trim() : '',
                       bay: bi >= 0 && r[bi] ? ensureBayPrefix(String(r[bi])) : '',
                       remark: ri >= 0 && r[ri] ? String(r[ri]).trim() : '',
@@ -974,6 +1007,15 @@ function ContainerManagement() {
             />
           </Col>
           <Col xs={12} md={3}>
+            <Input
+              placeholder="Năm"
+              value={filters.year}
+              onChange={e => { setFilters(p => ({ ...p, year: e.target.value.trim() })); setPage(1) }}
+              allowClear
+              onClear={() => { setFilters(p => ({ ...p, year: '' })); setPage(1) }}
+            />
+          </Col>
+          <Col xs={12} md={3}>
             <AutoComplete
               placeholder="Phân Loại"
               value={filters.location}
@@ -1044,6 +1086,9 @@ function ContainerManagement() {
           </Col>
           <Col xs={8} sm={6} md={1}>
             <Input placeholder="Size" value={addSize} onChange={e => setAddSize(e.target.value.toUpperCase())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+          </Col>
+          <Col xs={8} sm={6} md={1}>
+            <Input placeholder="Năm" value={addYear} onChange={e => setAddYear(e.target.value.trim())} onKeyDown={e => e.key === 'Enter' && handleAdd()} />
           </Col>
           <Col xs={12} sm={8} md={2}>
             <div style={{ display: 'flex' }}>
@@ -1143,12 +1188,17 @@ function ContainerManagement() {
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item name="size" label="Size" rules={[{ required: true, message: 'Nhập size' }]}>
                 <Input placeholder="VD: 40HC" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
+              <Form.Item name="year" label="Năm">
+                <Input placeholder="VD: 2024" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
               <Form.Item name="location" label="Phân Loại">
                 <AutoComplete placeholder="VD: Hư hỏng nặng / Nhẹ / ..."
                   options={[...new Set([...locationList, ...modalLocationOptions, ...(form.getFieldValue('location') ? [form.getFieldValue('location')] : [])])].filter(Boolean).map(o => ({ value: o }))}
@@ -1231,7 +1281,7 @@ function ContainerManagement() {
           dataSource={referenceData.filter(r => {
             if (!refSearch) return true
             const q = refSearch.toUpperCase()
-            return r.containerNo.toUpperCase().includes(q) || r.shippingLine.toUpperCase().includes(q) || r.size.toUpperCase().includes(q) || (r.bay || '').toUpperCase().includes(q)
+            return r.containerNo.toUpperCase().includes(q) || r.shippingLine.toUpperCase().includes(q) || r.size.toUpperCase().includes(q) || (r.year || '').toUpperCase().includes(q) || (r.bay || '').toUpperCase().includes(q)
           })}
           rowKey="containerNo"
           pagination={{ pageSize: 50, showTotal: t => `Tổng ${t} container` }}
@@ -1240,6 +1290,7 @@ function ContainerManagement() {
             { title: 'Container No', dataIndex: 'containerNo', key: 'containerNo' },
             { title: 'Hãng tàu', dataIndex: 'shippingLine', key: 'shippingLine' },
             { title: 'Size', dataIndex: 'size', key: 'size' },
+            { title: 'Năm', dataIndex: 'year', key: 'year' },
             { title: 'Bay', dataIndex: 'bay', key: 'bay' },
             {
               title: 'Xóa', key: 'action', width: 60, align: 'center',
@@ -1259,6 +1310,7 @@ function ContainerManagement() {
             <Row><Col span={8}><strong>Container No:</strong></Col><Col span={16}>{viewItem.containerNo}</Col></Row>
             <Row><Col span={8}><strong>Hãng tàu:</strong></Col><Col span={16}>{viewItem.shippingLine}</Col></Row>
             <Row><Col span={8}><strong>Size:</strong></Col><Col span={16}>{viewItem.size}</Col></Row>
+            <Row><Col span={8}><strong>Năm:</strong></Col><Col span={16}>{viewItem.year || '-'}</Col></Row>
             <Row><Col span={8}><strong>Phân Loại:</strong></Col><Col span={16}>{viewItem.location || '-'}</Col></Row>
             <Row><Col span={8}><strong>Bay:</strong></Col><Col span={16}>{viewItem.bay || '-'}</Col></Row>
             <Row><Col span={8}><strong>Ghi chú:</strong></Col><Col span={16}>{viewItem.remark || '-'}</Col></Row>
@@ -1347,6 +1399,7 @@ function ContainerManagement() {
             { title: 'Container No', dataIndex: 'Container No', key: 'Container No',width: 120 },
             { title: 'Hãng tàu', dataIndex: 'Hãng tàu', key: 'Hãng tàu' },
             { title: 'Size', dataIndex: 'Size', key: 'Size',width: 60 },
+            { title: 'Năm', dataIndex: 'Năm', key: 'Năm', width: 60 },
             { title: 'Ngày tạo', dataIndex: 'Ngày tạo', key: 'Ngày tạo', width: 100 },
             { title: 'Phân Loại', dataIndex: 'Phân Loại', key: 'Phân Loại', width: 120 },
             { title: 'Ghi chú', dataIndex: 'Ghi chú', key: 'Ghi chú', width: 150, ellipsis: true },
@@ -1475,12 +1528,17 @@ function ContainerManagement() {
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item name="size" label="Size" rules={[{ required: true, message: 'Nhập size' }]}>
                 <Input placeholder="VD: 40HC" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
+              <Form.Item name="year" label="Năm">
+                <Input placeholder="VD: 2024" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
               <Form.Item name="location" label="Phân Loại">
                 <AutoComplete placeholder="VD: Hư hỏng nặng / Nhẹ / ..."
                   options={[...new Set([...locationList, ...(lockEditForm.getFieldValue('location') ? [lockEditForm.getFieldValue('location')] : [])])].filter(Boolean).map(o => ({ value: o }))}

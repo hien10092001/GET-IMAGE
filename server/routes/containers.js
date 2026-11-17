@@ -15,7 +15,7 @@ router.use((req, res, next) => {
   return adminGuard(req, res, next)
 })
 
-const PUBLIC_FIELDS = ['_id', 'containerNo', 'shippingLine', 'size', 'location', 'remark', 'bay', 'locked', 'createdAt', '_source']
+const PUBLIC_FIELDS = ['_id', 'containerNo', 'shippingLine', 'size', 'year', 'location', 'remark', 'bay', 'locked', 'createdAt', '_source']
 
 const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
@@ -29,7 +29,7 @@ const toDateKey = (value) => {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
+    const { containerNo, shippingLine, size, year, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
     if (!containerNo) {
       return res.status(400).json({ message: 'Thiếu Container No' })
     }
@@ -37,6 +37,7 @@ router.post('/', authMiddleware, async (req, res) => {
       containerNo: containerNo.toUpperCase(),
       shippingLine,
       size,
+      year,
       bay,
       location,
       remark,
@@ -57,7 +58,7 @@ router.post('/', authMiddleware, async (req, res) => {
 
 router.get('/', async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt', includeLocks } = req.query
+    const { search, shippingLine, size, year, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt', includeLocks } = req.query
     const pageNum = Math.max(parseInt(page) || 1, 1)
     const limitNum = Math.max(parseInt(limit) || 20, 1)
     const skip = (pageNum - 1) * limitNum
@@ -77,6 +78,7 @@ router.get('/', async (req, res) => {
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
+    if (year) query.year = year
     if (location) query.location = { $regex: location, $options: 'i' }
     if (remark) query.remark = { $regex: remark, $options: 'i' }
     if (locked === 'true') query.locked = true
@@ -127,6 +129,7 @@ router.get('/', async (req, res) => {
       }
       if (shippingLine) itemMatch['items.shippingLine'] = { $regex: `^${escapeRegex(shippingLine)}$`, $options: 'i' }
       if (size) itemMatch['items.size'] = { $regex: `^${escapeRegex(size)}$`, $options: 'i' }
+      if (year) itemMatch['items.year'] = { $regex: `^${escapeRegex(year)}$`, $options: 'i' }
       if (location) itemMatch['items.location'] = { $regex: escapeRegex(location), $options: 'i' }
       if (remark) itemMatch['items.remark'] = { $regex: escapeRegex(remark), $options: 'i' }
 
@@ -142,6 +145,7 @@ router.get('/', async (req, res) => {
           containerNo: '$items.containerNo',
           shippingLine: '$items.shippingLine',
           size: '$items.size',
+          year: '$items.year',
           location: '$items.location',
           remark: '$items.remark',
           bay: '$items.bay',
@@ -238,7 +242,7 @@ router.get('/', async (req, res) => {
 
 router.get('/all', authMiddleware, async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked } = req.query
+    const { search, shippingLine, size, year, dateFrom, dateTo, location, remark, locked } = req.query
     const query = {}
     if (search) {
       query.$or = [
@@ -250,6 +254,7 @@ router.get('/all', authMiddleware, async (req, res) => {
     }
     if (shippingLine) query.shippingLine = shippingLine
     if (size) query.size = size
+    if (year) query.year = year
     if (location) query.location = { $regex: location, $options: 'i' }
     if (remark) query.remark = { $regex: remark, $options: 'i' }
     if (locked === 'true') query.locked = true
@@ -314,7 +319,7 @@ router.post('/by-nos', authMiddleware, async (req, res) => {
 // GET /api/containers/frequencies — count per containerNo, optionally filtered
 router.get('/frequencies', authMiddleware, async (req, res) => {
   try {
-    const { search, shippingLine, size, dateFrom, dateTo, location, remark, locked } = req.query
+    const { search, shippingLine, size, year, dateFrom, dateTo, location, remark, locked } = req.query
     const match = {}
 
     if (search) {
@@ -328,6 +333,7 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
     }
     if (shippingLine) match.shippingLine = shippingLine
     if (size) match.size = size
+    if (year) match.year = year
     if (location) match.location = { $regex: location, $options: 'i' }
     if (remark) match.remark = { $regex: remark, $options: 'i' }
     if (locked === 'true') match.locked = true
@@ -361,6 +367,7 @@ router.get('/frequencies', authMiddleware, async (req, res) => {
     }
     if (shippingLine) lockMatch['items.shippingLine'] = shippingLine
     if (size) lockMatch['items.size'] = size
+    if (year) lockMatch['items.year'] = year
     if (location) lockMatch['items.location'] = { $regex: location, $options: 'i' }
     if (remark) lockMatch['items.remark'] = { $regex: remark, $options: 'i' }
     if (dateFrom || dateTo) {
@@ -431,11 +438,12 @@ router.get('/:id', authMiddleware, async (req, res) => {
 
 router.put('/:id', authMiddleware, async (req, res) => {
   try {
-    const { containerNo, shippingLine, size, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
+    const { containerNo, shippingLine, size, year, bay, location, remark, createdAt, hinhIn, hinhSC, folderIn, folderSC, folderSC2 } = req.body
     const update = {}
     if (containerNo !== undefined) update.containerNo = containerNo.toUpperCase()
     if (shippingLine !== undefined) update.shippingLine = shippingLine
     if (size !== undefined) update.size = size
+    if (year !== undefined) update.year = year
     if (bay !== undefined) update.bay = bay
     if (location !== undefined) update.location = location
     if (remark !== undefined) update.remark = remark

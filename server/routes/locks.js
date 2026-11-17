@@ -43,6 +43,7 @@ async function updateShippingListFromLock(items, lockDate) {
       if (item.remark && item.remark !== listItem.remark) {
         listItem.remark = item.remark
       }
+      if (item.year) listItem.year = item.year
       if (getKeywordMatch(remark, vsKeys)) {
         listItem.vsDvs = appendDate(listItem.vsDvs, lockDate)
       }
@@ -66,7 +67,7 @@ router.use(authMiddleware, roleMiddleware('Admin'))
 // GET /api/locks — list all locks, with optional filters
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { date, dateFrom, dateTo, shift, search, shippingLine, size, location, type } = req.query
+    const { date, dateFrom, dateTo, shift, search, shippingLine, size, year, location, type } = req.query
     const query = {}
     if (date) {
       query.date = date
@@ -80,6 +81,7 @@ router.get('/', authMiddleware, async (req, res) => {
     if (search) query['items.containerNo'] = { $regex: search, $options: 'i' }
     if (shippingLine) query['items.shippingLine'] = { $regex: shippingLine, $options: 'i' }
     if (size) query['items.size'] = { $regex: size, $options: 'i' }
+    if (year) query['items.year'] = { $regex: year, $options: 'i' }
     if (location) query['items.location'] = { $regex: location, $options: 'i' }
     const locks = await ProductionLock.find(query).sort({ date: -1, shift: -1 })
     res.json(locks)
@@ -259,6 +261,7 @@ router.get('/container-data/:containerNo', authMiddleware, async (req, res) => {
             containerNo: '$items.containerNo',
             shippingLine: '$items.shippingLine',
             size: '$items.size',
+            year: '$items.year',
             location: '$items.location',
             bay: '$items.bay',
             remark: '$items.remark',
@@ -271,6 +274,7 @@ router.get('/container-data/:containerNo', authMiddleware, async (req, res) => {
           containerNo: '$_id.containerNo',
           shippingLine: '$_id.shippingLine',
           size: '$_id.size',
+          year: '$_id.year',
           location: '$_id.location',
           bay: '$_id.bay',
           remark: '$_id.remark',

@@ -64,6 +64,7 @@ router.post('/', authMiddleware, async (req, res) => {
         containerNo: (i.containerNo || '').toUpperCase().trim(),
         shippingLine: i.shippingLine || '',
         size: i.size || '',
+        year: i.year || '',
         remark: i.remark || '',
         dsc: i.dsc || '',
         choHtxnDvs: i.choHtxnDvs || '',
@@ -160,6 +161,7 @@ router.put('/:id/items', authMiddleware, async (req, res) => {
     for (const u of updates) {
       const item = list.items.id(u._id)
       if (!item) continue
+      if (u.year !== undefined) item.year = u.year
       if (u.dsc !== undefined) item.dsc = u.dsc
       if (u.choHtxnDvs !== undefined) item.choHtxnDvs = u.choHtxnDvs
       if (u.sc !== undefined) item.sc = u.sc
