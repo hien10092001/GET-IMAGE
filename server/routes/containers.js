@@ -2,7 +2,7 @@ import { Router } from 'express'
 import Container from '../models/Container.js'
 import ShippingList from '../models/ShippingList.js'
 import ProductionLock from '../models/ProductionLock.js'
-import { authMiddleware, roleMiddleware } from '../middleware/auth.js'
+import { authMiddleware, optionalAuthMiddleware, roleMiddleware } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -56,7 +56,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 })
 
-router.get('/', async (req, res) => {
+router.get('/', optionalAuthMiddleware, async (req, res) => {
   try {
     const { search, shippingLine, size, year, dateFrom, dateTo, location, remark, locked, page = 1, limit = 20, sort = 'createdAt', includeLocks } = req.query
     const pageNum = Math.max(parseInt(page) || 1, 1)

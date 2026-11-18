@@ -29,6 +29,18 @@ export function authMiddleware(req, res, next) {
   }
 }
 
+export function optionalAuthMiddleware(req, res, next) {
+  const header = req.headers.authorization
+  if (header && header.startsWith('Bearer ')) {
+    try {
+      req.user = verifyToken(header.split(' ')[1])
+    } catch {
+      req.user = undefined
+    }
+  }
+  next()
+}
+
 export function roleMiddleware(...roles) {
   return (req, res, next) => {
     if (!roles.includes(req.user.role)) {

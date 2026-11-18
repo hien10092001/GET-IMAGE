@@ -50,6 +50,33 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 })
 
+// POST /api/shipping-lists/by-nos — list name memberships for given container numbers
+router.post('/by-nos', authMiddleware, async (req, res) => {
+  try {
+    const nos = [...new Set((req.body?.containerNos || [])
+      .map((n) => String(n || '').toUpperCase().trim())
+      .filter(Boolean))]
+    if (!nos.length) return res.json({})
+    const wanted = new Set(nos)
+    const lists = await ShippingList.find(
+      { 'items.containerNo': { $in: nos } },
+      { name: 1, 'items.containerNo': 1 }
+    ).lean()
+    const map = {}
+    lists.forEach((sl) => {
+      (sl.items || []).forEach((item) => {
+        const cn = String(item.containerNo || '').toUpperCase().trim()
+        if (!cn || !wanted.has(cn)) return
+        if (!map[cn]) map[cn] = []
+        if (!map[cn].includes(sl.name)) map[cn].push(sl.name)
+      })
+    })
+    res.json(map)
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
+
 // POST /api/shipping-lists — create
 router.post('/', authMiddleware, async (req, res) => {
   try {

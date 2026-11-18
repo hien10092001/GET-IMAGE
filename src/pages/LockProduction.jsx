@@ -572,11 +572,19 @@ function LockProduction() {
   const [lockShift, setLockShift] = useState('sáng')
   const [detailOpen, setDetailOpen] = useState(false)
   const [currentLock, setCurrentLock] = useState(null)
+  const [detailShippingMap, setDetailShippingMap] = useState({})
   const openLockDetail = (lock) => {
     setCurrentLock(lock)
     setDetailContainerSearch('')
     setDetailShippingLineSearch('')
+    setDetailShippingMap({})
     setDetailOpen(true)
+    const containerNos = [...new Set((lock?.items || []).map(i => i.containerNo).filter(Boolean))]
+    if (containerNos.length) {
+      api.post('/shipping-lists/by-nos', { containerNos })
+        .then(res => setDetailShippingMap(res.data || {}))
+        .catch(() => setDetailShippingMap({}))
+    }
   }
   const [itemModalOpen, setItemModalOpen] = useState(false)
   const [editingItem, setEditingItem] = useState(null)
@@ -685,10 +693,16 @@ function LockProduction() {
   const getActiveExportFields = () =>
     Object.entries(selectedExportFields).filter(([, v]) => v).map(([k]) => exportFieldLabels[k])
 
-  const getShippingListNames = (containerNo) => {
-    const names = shippingLists
-      .filter(sl => sl.items?.some(i => i.containerNo === containerNo))
+  const getShippingListNamesArray = (containerNo) => {
+    const key = String(containerNo || '').toUpperCase().trim()
+    if (detailShippingMap[key]?.length) return detailShippingMap[key]
+    return shippingLists
+      .filter(sl => sl.items?.some(i => String(i.containerNo || '').toUpperCase().trim() === key))
       .map(sl => sl.name)
+  }
+
+  const getShippingListNames = (containerNo) => {
+    const names = getShippingListNamesArray(containerNo)
     return names.length ? names.join(', ') : ''
   }
 
@@ -1786,8 +1800,8 @@ function LockProduction() {
     {
       title: 'List tàu', key: 'shippingLists', width: 180,
       render: (_, r) => {
-        const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
-        return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+        const names = getShippingListNamesArray(r.containerNo)
+        return names.length ? names.map((name, i) => <Tag key={i} color="geekblue" style={{ marginBottom: 2 }}>{name}</Tag>) : <span className="text-gray-400">--</span>
       },
     },
     {
@@ -1883,8 +1897,8 @@ function LockProduction() {
     {
       title: 'List tàu', key: 'shippingLists', width: 180,
       render: (_, r) => {
-        const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
-        return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+        const names = getShippingListNamesArray(r.containerNo)
+        return names.length ? names.map((name, i) => <Tag key={i} color="geekblue" style={{ marginBottom: 2 }}>{name}</Tag>) : <span className="text-gray-400">--</span>
       },
     },
     {
@@ -2492,8 +2506,8 @@ function LockProduction() {
                 {
                   title: 'List tàu', key: 'shippingLists', width: 180,
                   render: (_, r) => {
-                    const lists = shippingLists.filter(sl => sl.items?.some(i => i.containerNo === r.containerNo))
-                    return lists.length ? lists.map(l => <Tag key={l._id} color="geekblue" style={{ marginBottom: 2 }}>{l.name}</Tag>) : <span className="text-gray-400">--</span>
+                    const names = getShippingListNamesArray(r.containerNo)
+                    return names.length ? names.map((name, i) => <Tag key={i} color="geekblue" style={{ marginBottom: 2 }}>{name}</Tag>) : <span className="text-gray-400">--</span>
                   },
                 },
                 {
